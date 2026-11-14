@@ -76,6 +76,25 @@ pile index, so the top row still adds up to exactly the seven columns: one for
 the stock, two for the waste, four for the foundations. The fan is then clamped
 to its own cell, with a floor so three cards stay three cards at phone size.
 
+**A pile's hit area is the union of its cards, not one card plus a height.** A
+height is right for a column, which fans downwards, and wrong for a pile that
+fans sideways: a three-card waste put two cards outside a one-card-wide box, so
+a press on them hit no pile at all and the board felt dead exactly where a player
+aims. The box is now the union of the cards the pile draws.
+
+**A pile that shows only its last few cards answers with its top card.** Only the
+right-hand waste card can be played, so a tap on a sliver of an earlier one
+answers with its top and says something useful. Answering "that card cannot move"
+about the card under the finger is technically true and feels like the board is
+ignoring you. A column is different: it exposes every face-up card, because
+picking a run up from its middle is the point of a tableau.
+
+**A double tap only ever sends a card home, and does nothing otherwise.** It used
+to fall back to "the best column", which meant a quick second tap could move a
+card somewhere the player never chose — and on a touch screen a quick second tap
+is what a player does when unsure the first one registered. A tap on a face-down
+card with nothing in hand now says nothing at all: a card back is not a control.
+
 **The board is its own stacking context (`isolation: isolate`).** A card's
 `z-index` is what keeps a fanned column in order, and those numbers run into the
 hundreds. Without the isolation a card paints over the menu sheet and over the

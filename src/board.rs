@@ -361,47 +361,40 @@ impl Layout {
             .map(|(_, x, y)| (*x, *y))
     }
 
-    /// A pile's rectangle: where its first card sits, one card wide and as tall
-    /// as the pile is drawn. An empty pile is one card.
+    /// A pile's rectangle: the union of every card it holds, or one card where
+    /// an empty pile sits.
+    ///
+    /// The union, not a one-card box with an accumulated height, and that is the
+    /// difference between a board that can be tapped and one that cannot. A
+    /// column fans downwards, so a height is enough; a pile that fans *sideways*
+    /// — a three-card waste — puts two of its cards outside a one-card-wide box
+    /// entirely, and a press on them hits nothing at all.
     #[must_use]
     pub fn pile_rect(&self, scene: &Scene, place: Place) -> Option<Rect> {
         let (x, y) = self.place(place)?;
         let slot = scene.slot(place)?;
-        let height = self.pile_height(slot);
-        Some(Rect {
+        let mut rect: Option<Rect> = None;
+        for card in &slot.cards {
+            let Some((cx, cy)) = self.card(card.id) else {
+                continue;
+            };
+            let this = Rect {
+                x: cx,
+                y: cy,
+                width: self.card_w,
+                height: self.card_h,
+            };
+            rect = Some(match rect {
+                None => this,
+                Some(rect) => rect.union(this),
+            });
+        }
+        Some(rect.unwrap_or(Rect {
             x,
             y,
             width: self.card_w,
-            height,
-        })
-    }
-
-    /// How tall a pile is drawn.
-    #[must_use]
-    pub fn pile_height(&self, slot: &Slot) -> f64 {
-        let count = slot.cards.len();
-        if count == 0 || slot.fan.stacked {
-            return self.card_h;
-        }
-        let first_fanned = count.saturating_sub(slot.fan.fan_tail.max(count).min(count));
-        let fanned = if slot.fan.fan_tail == 0 {
-            0
-        } else {
-            first_fanned
-        };
-        let mut offset = 0.0;
-        for index in 1..count {
-            if index <= fanned {
-                continue;
-            }
-            let below = slot.cards[index - 1];
-            offset += if below.face_down {
-                self.card_h * slot.fan.down
-            } else {
-                self.card_h * slot.fan.up
-            };
-        }
-        self.card_h + offset
+            height: self.card_h,
+        }))
     }
 
     /// The card or pile under `point`, ignoring nothing.
@@ -417,6 +410,20 @@ impl Layout {
                 continue;
             };
             if !rect.contains(point) {
+                continue;
+            }
+            // A pile whose cards are not individually exposed — a packet, or a
+            // fan that shows only its last few — has one answer: its top card.
+            // That is the card the player is reaching for however they aim: a
+            // waste shows three cards but only the right-hand one can be played,
+            // and answering a tap on a sliver with "that card cannot move" is
+            // the clunky half of a board that reads as unresponsive.
+            if slot.fan.stacked || slot.fan.fan_tail > 0 {
+                let index = slot.cards.len().saturating_sub(1);
+                let depth = f64::from(u32::try_from(index).unwrap_or(0)) + DROP_OVERLAP;
+                if best.is_none_or(|(_, _, best_depth)| depth >= best_depth) {
+                    best = Some((slot.place, index, depth));
+                }
                 continue;
             }
             // Which card of this pile: the last one whose own rectangle holds
@@ -585,6 +592,21 @@ impl Rect {
         let width = (right - left).max(0.0);
         let height = (bottom - top).max(0.0);
         width * height
+    }
+
+    /// The smallest rectangle containing both.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let right = (self.x + self.width).max(other.x + other.width);
+        let bottom = (self.y + self.height).max(other.y + other.height);
+        Self {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        }
     }
 
     /// The same rectangle moved by a delta.
@@ -1141,10 +1163,9 @@ mod tests {
         let first = layout.card(0).expect("placed");
         assert_eq!(layout.card(1), Some(first));
         assert_eq!(layout.card(2), Some(first));
-        assert_eq!(
-            layout.pile_height(scene.slot(Place::Top(0)).expect("slot")),
-            layout.card_h
-        );
+        // And the pile as a whole is exactly one card, however many are in it.
+        let rect = layout.pile_rect(&scene, Place::Top(0)).expect("a pile");
+        assert_eq!((rect.width, rect.height), (layout.card_w, layout.card_h));
     }
 
     #[test]
@@ -1245,6 +1266,131 @@ mod tests {
             .card_at(&scene, (x + 5.0, y + 5.0))
             .expect("the empty place itself");
         assert_eq!(hit, (Place::Column(2), 0));
+    }
+
+    /// A pile that fans sideways covers the ground its cards cover.
+    ///
+    /// The reported defect: reaching for the top card of a three-card waste did
+    /// nothing. The pile's box was one card wide with an accumulated *height*,
+    /// which is right for a column and wrong for a horizontal fan — the second
+    /// and third cards sat outside the box, so a press on them hit no pile at
+    /// all and the board felt dead exactly where the player was aiming.
+    #[test]
+    fn a_sideways_fan_is_as_wide_as_its_cards() {
+        let scene = Scene::new(
+            vec![Slot {
+                span: 2,
+                ..top(0, &[(0, false), (1, false), (2, false)], Fan::tail(3))
+            }],
+            1,
+        );
+        let layout = layout(&scene, &frame(900.0, 600.0));
+        let rect = layout.pile_rect(&scene, Place::Top(0)).expect("a pile");
+        let first = layout.card(0).expect("placed");
+        let last = layout.card(2).expect("placed");
+        assert!(
+            last.0 > first.0,
+            "this scene must actually fan sideways to test anything"
+        );
+        assert!(rect.x <= first.0 + 0.01, "the box starts at the first card");
+        assert!(
+            rect.x + rect.width >= last.0 + layout.card_w - 0.01,
+            "the box reaches the last card: {:.1} vs {:.1}",
+            rect.x + rect.width,
+            last.0 + layout.card_w
+        );
+    }
+
+    /// Every point on a fanned pile's cards answers with that pile.
+    ///
+    /// Aiming at the right-hand card — the one a player actually wants — must
+    /// not fall through a one-card-wide box.
+    #[test]
+    fn every_visible_part_of_a_fan_is_a_press_on_it() {
+        let scene = Scene::new(
+            vec![Slot {
+                span: 2,
+                ..top(0, &[(0, false), (1, false), (2, false)], Fan::tail(3))
+            }],
+            1,
+        );
+        let layout = layout(&scene, &frame(900.0, 600.0));
+        for card in 0..3u16 {
+            let (x, y) = layout.card(card).expect("placed");
+            // The middle and the right-hand side of each card, top and bottom.
+            for fx in [0.5, 0.95] {
+                for fy in [0.1, 0.5, 0.9] {
+                    let point = (x + layout.card_w * fx, y + layout.card_h * fy);
+                    assert_eq!(
+                        layout.card_at(&scene, point).map(|(place, _)| place),
+                        Some(Place::Top(0)),
+                        "card {card} at ({fx}, {fy}) is a press on the fan"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A pile that shows only its last few cards answers with its **top** card.
+    ///
+    /// Only the right-hand waste card can be played; answering a tap on a sliver
+    /// of an earlier one with "that card cannot move" is technically true and
+    /// feels like the board is ignoring you.
+    #[test]
+    fn a_tail_fan_answers_with_its_top_card() {
+        let scene = Scene::new(
+            vec![Slot {
+                span: 2,
+                ..top(0, &[(0, false), (1, false), (2, false)], Fan::tail(3))
+            }],
+            1,
+        );
+        let layout = layout(&scene, &frame(900.0, 600.0));
+        let (x, y) = layout.card(0).expect("placed");
+        // Deep in the overlap, where the left-most card is what is drawn.
+        let point = (x + layout.card_w * 0.2, y + layout.card_h * 0.5);
+        assert_eq!(
+            layout.card_at(&scene, point),
+            Some((Place::Top(0), 2)),
+            "the fan's answer is its top card, not the one under the finger"
+        );
+    }
+
+    /// A packet answers with its top card too, and so does the stock.
+    #[test]
+    fn a_packet_answers_with_its_top_card() {
+        let scene = Scene::new(
+            vec![top(0, &[(0, true), (1, true), (2, true)], Fan::PACKET)],
+            1,
+        );
+        let layout = layout(&scene, &frame(900.0, 600.0));
+        let (x, y) = layout.card(0).expect("placed");
+        assert_eq!(
+            layout.card_at(&scene, (x + 4.0, y + 4.0)),
+            Some((Place::Top(0), 2))
+        );
+    }
+
+    /// A column still answers with the card under the finger.
+    ///
+    /// The rule above must not leak: picking up a run from its middle is the
+    /// whole point of a tableau, and a column is a pile that *does* expose its
+    /// cards.
+    #[test]
+    fn a_column_still_answers_with_the_card_under_the_finger() {
+        let scene = Scene::new(
+            vec![column(0, &[(0, false), (1, false), (2, false), (3, false)])],
+            0,
+        );
+        let layout = layout(&scene, &frame(900.0, 700.0));
+        // The top of the second card is not covered by anything below it.
+        let (x, y) = layout.card(1).expect("placed");
+        let point = (x + layout.card_w * 0.5, y + 2.0);
+        assert_eq!(
+            layout.card_at(&scene, point),
+            Some((Place::Column(0), 1)),
+            "a column exposes its cards one by one"
+        );
     }
 
     #[test]

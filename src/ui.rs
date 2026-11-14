@@ -82,7 +82,17 @@ impl Klondike {
             return self.game.draw();
         }
         match index {
-            Some(index) => self.game.tap(pile, index),
+            Some(index) => {
+                // A face-down card is not a control, and with nothing in hand a
+                // tap on one is a tap on the table: say nothing rather than
+                // telling the player off for touching a card back. With a run
+                // held, the tap is a request to drop it on this pile, which the
+                // game answers for itself.
+                if self.game.selection().is_none() && self.game.is_face_down(pile, index) {
+                    return Report::quiet("");
+                }
+                self.game.tap(pile, index)
+            }
             // An empty place: a press on it is a destination for whatever is in
             // hand, and nothing more.
             None if self.game.selection().is_some() => self.game.drop(pile),

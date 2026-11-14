@@ -892,34 +892,23 @@ impl Game {
         if self.won {
             return Report::quiet("The deal is over. Start a new one.");
         }
-        let Some(count) = self.run_len_inner(pile, index) else {
-            return Report::quiet("That card cannot move.");
-        };
         let Some(card) = self.card_at(pile, index) else {
             return Report::quiet("That card cannot move.");
         };
-        if count == 1 {
-            if let Some(foundation) = self.foundation_for(card) {
-                return self.apply(Selection { pile, index }, Pile::Foundation(foundation));
-            }
+        if self.run_len_inner(pile, index) != Some(1) {
+            // Only a single card can go home; a run is a thing to move by hand.
+            self.selection = None;
+            return Report::quiet(format!("The {} is part of a run.", card.name()));
         }
-        let mut empty = None;
-        for destination in 0..COLUMNS {
-            let to = Pile::Tableau(destination);
-            if to == pile || !self.accepts(to, card) {
-                continue;
-            }
-            if self.pile_len(to) == 0 {
-                empty = Some(to);
-            } else {
-                return self.apply(Selection { pile, index }, to);
-            }
+        if let Some(foundation) = self.foundation_for(card) {
+            return self.apply(Selection { pile, index }, Pile::Foundation(foundation));
         }
-        if let Some(to) = empty {
-            return self.apply(Selection { pile, index }, to);
-        }
+        // Nothing moves, and the card is put back. A double tap means "send this
+        // home", and when it cannot there is no second-best place to send it: a
+        // card that jumps to a column the player did not choose is worse than a
+        // card that stays where they left it.
         self.selection = None;
-        Report::quiet(format!("No move for the {}.", card.name()))
+        Report::quiet(format!("Nowhere to send the {} home.", card.name()))
     }
 
     /// Turn the stock, or turn the waste back over when the stock is empty.
@@ -2052,6 +2041,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A double tap sends a card home and does nothing else.
+    ///
+    /// This is a deliberate narrowing. It used to fall back to "the best
+    /// column", which meant a quick second tap could send a card somewhere the
+    /// player never chose — and on a touch screen a quick second tap is what a
+    /// player does when they are not sure the first one registered.
+    #[test]
+    fn a_double_tap_only_ever_sends_a_card_home() {
+        let mut game = empty_game(Scoring::Standard);
+        // A two with an empty foundation and an empty column: it can go on the
+        // column, and it must not.
+        game.tableau[0]
+            .cards
+            .push(id(&game, Rank::Two, Suit::Hearts));
+        game.tableau[0].up = 0;
+        let report = game.double_tap(Pile::Tableau(0), 0);
+        assert!(report.words.contains("Nowhere to send"), "{}", report.words);
+        assert_eq!(game.pile_len(Pile::Tableau(0)), 1, "the card stayed put");
+        assert_eq!(game.pile_len(Pile::Tableau(1)), 0, "and did not jump");
+        assert_eq!(game.selection(), None, "and nothing is left held");
+
+        // An ace goes home.
+        game.tableau[2]
+            .cards
+            .push(id(&game, Rank::Ace, Suit::Clubs));
+        game.tableau[2].up = 0;
+        let report = game.double_tap(Pile::Tableau(2), 0);
+        assert!(report.words.contains("Moved"), "{}", report.words);
+        assert_eq!(game.pile_len(Pile::Tableau(2)), 0);
+        assert_eq!(game.pile_len(Pile::Foundation(0)), 1);
+    }
+
+    /// A run is not a double-tap target: a double tap on the middle of a run
+    /// must not split it.
+    #[test]
+    fn a_double_tap_leaves_a_run_alone() {
+        let mut game = empty_game(Scoring::Standard);
+        game.tableau[0]
+            .cards
+            .push(id(&game, Rank::Two, Suit::Hearts));
+        game.tableau[0]
+            .cards
+            .push(id(&game, Rank::Ace, Suit::Spades));
+        game.tableau[0].up = 0;
+        let report = game.double_tap(Pile::Tableau(0), 0);
+        assert!(report.words.contains("part of a run"), "{}", report.words);
+        assert_eq!(game.pile_len(Pile::Tableau(0)), 2);
     }
 
     /// A play-through of random legal actions on many deals.
