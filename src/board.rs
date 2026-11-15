@@ -329,6 +329,32 @@ pub struct Frame {
 /// of the width.
 pub const ASPECT: f64 = 1.45;
 
+/// The class list for one card: its suit, whether it is face down, and one flag
+/// per state it is in — `selected`, `hinted`, `dragging`, `focused`.
+///
+/// The suit class is **not decoration**. `.card.red` is the rule that paints a
+/// red rank red, so a class list that forgets it turns the card black for as
+/// long as that list stands, and a card in the air had exactly that: the drag
+/// built `card dragging` by hand and the rank changed colour under the finger.
+///
+/// So there is one builder, and the states come in as a list rather than being
+/// appended by each caller. That is the part that keeps it fixed: a caller used
+/// to be able to rebuild this string and honour only the states *it* knew about,
+/// and a second one had already drifted the same way — a repaint that marked a
+/// drop target lost the hint that was on the same card.
+#[must_use]
+pub fn card_classes(suit_class: &str, face_down: bool, states: &[&str]) -> String {
+    let mut classes = format!("card {suit_class}");
+    if face_down {
+        classes.push_str(" down");
+    }
+    for state in states {
+        classes.push(' ');
+        classes.push_str(state);
+    }
+    classes
+}
+
 /// Where every card and every pile is, for one frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
@@ -1587,6 +1613,57 @@ mod tests {
         assert!(a.contains((10.0, 10.0)));
         assert!(!a.contains((10.1, 0.0)));
         assert_eq!(b.moved(-5.0, -5.0), a);
+    }
+
+    /// A card's suit class survives every state it can be in.
+    ///
+    /// `.card.red` is the rule that paints a red rank red, so a class list
+    /// without the suit class is a red card drawn black. The drag built its own
+    /// list — `card dragging` — and that is exactly what happened: pick a red
+    /// card up and it turned black under the finger, then red again when it
+    /// landed. Every state now goes through one builder, and this is the test
+    /// that says the suit cannot fall out of it.
+    #[test]
+    fn a_card_keeps_its_suit_class_in_every_state() {
+        for suit in ["red", "black"] {
+            for face_down in [false, true] {
+                for states in [
+                    vec![],
+                    vec!["dragging"],
+                    vec!["selected"],
+                    vec!["hinted"],
+                    vec!["focused"],
+                    vec!["drop-target"],
+                    vec!["dragging", "focused", "hinted"],
+                ] {
+                    let classes = card_classes(suit, face_down, &states);
+                    let parts: Vec<&str> = classes.split(' ').collect();
+                    assert_eq!(parts[0], "card", "{classes}");
+                    assert_eq!(parts[1], suit, "{classes} must keep its suit class");
+                    assert_eq!(
+                        parts.contains(&"down"),
+                        face_down,
+                        "{classes}: the face is part of the class list"
+                    );
+                    for state in &states {
+                        assert!(parts.contains(state), "{classes} lost {state}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The class list is one list: no state is silently dropped because a
+    /// caller only knew about the states it was adding.
+    #[test]
+    fn every_state_reaches_the_class_list() {
+        let classes = card_classes("red", false, &["selected", "hinted", "drop-target"]);
+        assert_eq!(classes, "card red selected hinted drop-target");
+        assert_eq!(card_classes("black", true, &[]), "card black down");
+        assert_eq!(
+            card_classes("red", false, &["dragging"]),
+            "card red dragging"
+        );
     }
 
     #[test]

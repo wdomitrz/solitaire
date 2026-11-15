@@ -100,6 +100,24 @@ card with nothing in hand now says nothing at all: a card back is not a control.
 hundreds. Without the isolation a card paints over the menu sheet and over the
 victory dialog, both of which are deliberately above the board.
 
+**A card's class list is built in one place, and it always carries the suit
+class.** `.card.red` is the *only* rule that paints a red rank red, so a class
+list without the suit class is a red card drawn black. The drag built its own —
+`set_class_name("card dragging")` — so picking a red card up turned it black
+under the finger and red again when it landed. Four callers were each appending
+the states they knew about, and they had already drifted the same way: the
+repaint that marks a drop target silently dropped a hint sitting on the same
+card.
+
+`board::card_classes(suit, face_down, states)` is now the only builder, in
+`board.rs` because that is compiled for the host — `board_ui.rs` is wasm-only, so
+a test written in it would never run under `cargo test` (this family has been
+bitten by that once already). Two tests hold it: `a_card_keeps_its_suit_class_in_every_state`
+checks the builder against every state a card can be in, and
+`a_cards_class_list_is_built_in_one_place` (in `tests/shell.rs`) refuses any
+`set_class_name("card …")` or `format!("card …")` in `board_ui.rs`. Both fail on
+the old code — the structural one names the offending line.
+
 **One listener per board, not one per card.** A press is read off the element it
 landed on; that element carries its pile and its position in the pile. Cards are
 never rebuilt — a render moves them and rewrites their description — so a drag in
@@ -165,7 +183,7 @@ move every card twice.
 ## Verification
 
 ```bash
-cargo test --locked                 # the rules, the save format, the shell
+cargo test --locked                 # the rules, the save format, the shell, the card's classes
 cargo clippy --locked --all-targets -- -D warnings
 cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
 ```

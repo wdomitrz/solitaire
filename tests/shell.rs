@@ -509,6 +509,53 @@ fn every_element_the_shell_renders_is_written_by_the_app() {
     }
 }
 
+/// A card's class list is built in exactly one place.
+///
+/// `.card.red` is the rule that paints a red rank red, so a class list that
+/// omits the suit class draws a red card black. The drag rebuilt the string by
+/// hand — `set_class_name("card dragging")` — and that is precisely what a
+/// player saw: pick a red card up and it turned black under the finger, then
+/// red again when it landed. Four callers each appended the states they knew
+/// about, and they had already drifted: the drop-target pass silently dropped a
+/// hint that was on the same card.
+///
+/// So the invariant is structural rather than a screenshot: no caller may spell
+/// a card's class list itself. `board::card_classes` is the only builder, and it
+/// is host-compiled, so its own test (`a_card_keeps_its_suit_class_in_every_state`)
+/// runs under plain `cargo test` — `board_ui` is wasm-only and a test in it would
+/// never run.
+#[test]
+fn a_cards_class_list_is_built_in_one_place() {
+    let code = strip_rust_comments(&read("src/board_ui.rs"));
+    let mut hand_built = Vec::new();
+    for (number, line) in code.lines().enumerate() {
+        let text = line.trim();
+        if text.contains("set_class_name(\"card") || text.contains("format!(\"card ") {
+            hand_built.push(format!("{}: {}", number + 1, text));
+        }
+    }
+    assert!(
+        hand_built.is_empty(),
+        "a card's class list is built by `card_classes`, which is the only thing          that cannot forget the suit class — a red card with no suit class is \
+         drawn black. Found: {hand_built:#?}"
+    );
+    assert!(
+        code.contains("card_classes("),
+        "board_ui must build card class lists with `card_classes`"
+    );
+    // And the builder is the shared board's, not a copy beside it.
+    let board = strip_rust_comments(&read("src/board.rs"));
+    assert!(
+        board.contains("pub fn card_classes("),
+        "the one builder lives in `board.rs`, which is host-compiled so its test can run"
+    );
+    assert!(
+        !strip_rust_comments(&read("src/ui.rs")).contains("card_classes(")
+            && !strip_rust_comments(&read("src/shell.rs")).contains("card_classes("),
+        "nothing outside the board has any business building a card's classes"
+    );
+}
+
 /// The board's own vocabulary is shared with the rules, not invented twice.
 #[test]
 fn the_page_and_the_rules_agree_on_the_piles() {

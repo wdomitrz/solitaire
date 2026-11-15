@@ -38,7 +38,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, Event, HtmlElement, MouseEvent, PointerEvent};
 
-use crate::board::{layout, Frame, Gesture, Layout, Place, Press, Rect, Scene, Slot};
+use crate::board::{card_classes, layout, Frame, Gesture, Layout, Place, Press, Rect, Scene, Slot};
 use crate::card::Card;
 
 /// How close two taps must be, in milliseconds, to be a double tap.
@@ -511,7 +511,11 @@ impl BoardUi {
                 // A card that left the board — a completed run lifted in Spider
                 // — stops being drawn, and stops answering to a pile. Its element
                 // stays, because the deck is built once.
-                element.set_class_name("card gone");
+                element.set_class_name(&card_classes(
+                    self.suit_class(card_id),
+                    self.card_face_down(card_id),
+                    &["gone"],
+                ));
                 let _ = element.set_attribute("hidden", "");
                 let _ = element.set_attribute("aria-hidden", "true");
                 let _ = element.remove_attribute("aria-label");
@@ -533,30 +537,31 @@ impl BoardUi {
                 continue;
             }
             let (x, y) = self.layout.card(card_id).unwrap_or((0.0, 0.0));
-            let mut classes = format!("card {}", self.suit_class(card_id));
-            if card.face_down {
-                classes.push_str(" down");
-            }
+            let mut states: Vec<&str> = Vec::new();
             // A run the *game* is holding is selected; the cards a live drag is
             // carrying are styled by the gesture instead. The board never keeps
             // a second opinion about what the game has picked up.
             if selection.is_some_and(|(held_place, start)| held_place == place && index >= start) {
-                classes.push_str(" selected");
+                states.push("selected");
             }
             if hint.is_some_and(|(hint_place, start, count)| {
                 hint_place == place && index >= start && index < start + count
             }) {
-                classes.push_str(" hinted");
+                states.push("hinted");
             }
             if focus == (place, Some(index)) {
-                classes.push_str(" focused");
+                states.push("focused");
             }
             // The pile a drop would land on, shown on the card that will be
             // under it: the slot itself is invisible under a full pile.
             if target == Some(place) && index + 1 == slot.cards.len() && !card.face_down {
-                classes.push_str(" drop-target");
+                states.push("drop-target");
             }
-            element.set_class_name(&classes);
+            element.set_class_name(&card_classes(
+                self.suit_class(card_id),
+                card.face_down,
+                &states,
+            ));
             let _ = element.set_attribute(
                 "style",
                 &format!(
@@ -608,6 +613,19 @@ impl BoardUi {
         }
     }
 
+    /// Whether the board has this card face down.
+    ///
+    /// A gesture that restyles a card has to keep saying everything the card
+    /// is, not only what the gesture adds, so it needs the face too.
+    fn card_face_down(&self, id: u16) -> bool {
+        self.scene
+            .slots
+            .iter()
+            .flat_map(|slot| &slot.cards)
+            .find(|card| card.id == id)
+            .is_some_and(|card| card.face_down)
+    }
+
     fn suit_class(&self, id: u16) -> &'static str {
         self.deck
             .get(id as usize)
@@ -644,7 +662,13 @@ impl BoardUi {
                 continue;
             };
             let z = 2_000 + i32::try_from(offset).unwrap_or(0);
-            element.set_class_name("card dragging");
+            // The suit class travels with the card. It is not a decoration the
+            // gesture may drop: see `board::card_classes`.
+            element.set_class_name(&card_classes(
+                self.suit_class(*id),
+                self.card_face_down(*id),
+                &["dragging"],
+            ));
             let _ = element.set_attribute(
                 "style",
                 &format!("left:{}px;top:{}px;z-index:{z}", x + dx, y + dy),
@@ -672,20 +696,18 @@ impl BoardUi {
             let Some(element) = self.cards.get(last.id as usize) else {
                 continue;
             };
-            let mut classes = format!("card {}", self.suit_class(last.id));
-            if last.face_down {
-                classes.push_str(" down");
-            }
-            if self.held.contains(&last.id) {
-                classes.push_str(" selected");
-            }
+            let mut states: Vec<&str> = Vec::new();
             if focus == (slot.place, slot.cards.len().checked_sub(1)) {
-                classes.push_str(" focused");
+                states.push("focused");
             }
             if target == Some(slot.place) {
-                classes.push_str(" drop-target");
+                states.push("drop-target");
             }
-            element.set_class_name(&classes);
+            element.set_class_name(&card_classes(
+                self.suit_class(last.id),
+                last.face_down,
+                &states,
+            ));
         }
     }
 
@@ -694,8 +716,11 @@ impl BoardUi {
     fn restore_dragged(&mut self, held: &[u16]) {
         for id in held {
             if let Some(element) = self.cards.get(*id as usize) {
-                let suit = self.suit_class(*id);
-                element.set_class_name(&format!("card {suit}"));
+                element.set_class_name(&card_classes(
+                    self.suit_class(*id),
+                    self.card_face_down(*id),
+                    &[],
+                ));
             }
         }
         self.target = None;
@@ -741,7 +766,7 @@ impl BoardUi {
         let _ = element.set_attribute("type", "button");
         let _ = element.set_attribute("data-card", &id.to_string());
         let _ = element.set_attribute("data-rank", card.rank.short());
-        element.set_class_name(&format!("card {}", card.suit.class()));
+        element.set_class_name(&card_classes(card.suit.class(), false, &[]));
         element.set_inner_html(&card_html(card));
         self.board.append_child(&element)?;
         Ok(element)
