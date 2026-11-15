@@ -14,8 +14,10 @@ shell and `cargo build` writes the publishable site into `dist/`.
   double tap sends a card to a foundation or onto the best column.
 - Build the columns down in alternating colours; send aces to the foundations
   and continue upwards in suit. An empty column takes a king.
-- **Undo** takes back anything, including a turn of the stock. **Hint** lights
-  the move worth making. **Finish** appears once every card is face up.
+- **Undo** takes back anything, including a turn of the stock. **Hint** rings
+  the card to pick up and the place it goes — and only ever suggests a move that
+  changes something, so pressing it twice cannot send you round in circles.
+  **Finish** appears once every card is face up.
 - The menu holds the two choices that define the deal, and both apply to the
   *next* one so that changing your mind never discards a game in progress:
 
@@ -28,6 +30,8 @@ shell and `cargo build` writes the publishable site into `dist/`.
   Scoring is **Standard** (the classic points table), **Vegas** (a 52-coin
   stake, five coins per card sent home, one pass) or **No score**.
 
+- Held sideways there is no row of controls under the table: the buttons move to
+  a rail beside it, so the cards get the whole height of the screen.
 - Keyboard: arrow keys move around the board, Enter picks up or drops, `U`
   undoes, `H` hints, `D` turns the stock, Escape puts a held card back.
 

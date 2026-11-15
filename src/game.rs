@@ -997,6 +997,16 @@ impl Game {
     /// Suggest a move. The suggestion is a heuristic, not a solver: it prefers
     /// the move that turns over a hidden card, then one that clears a column,
     /// then anything that sends a card home.
+    ///
+    /// It suggests only a move that *changes* the deal. "This move is legal" is
+    /// not enough to be worth pointing at: a card that can go onto another
+    /// column can usually come straight back, so a hint that counts every legal
+    /// move points at the card, then at the place it came from, then at the
+    /// card again — the deal does not move, and the player pressing Hint is
+    /// told to undo and redo the same move forever. What is worth pointing at
+    /// is a move that turns a card over, empties a column, or uncovers a card
+    /// that can go home; when those are all gone the hint says so, and the
+    /// stock is the next thing to try.
     #[must_use]
     pub fn hint(&self) -> Hint {
         if self.won {
@@ -1025,18 +1035,12 @@ impl Game {
                 let Some(card) = self.card_at(pile, index) else {
                     continue;
                 };
-                let mut base = 0;
-                if index == cards.up && cards.up > 0 {
-                    base += 1_000;
-                }
-                if index == 0 {
-                    base += 700;
-                }
+                let gain = self.column_gain(column, index);
                 if count == 1 {
                     for foundation in 0..FOUNDATIONS {
                         let to = Pile::Foundation(foundation);
                         if self.accepts(to, card) {
-                            consider(base + 800, Selection { pile, index }, to, count);
+                            consider(gain + 800, Selection { pile, index }, to, count);
                         }
                     }
                 }
@@ -1045,16 +1049,21 @@ impl Game {
                     if to == pile || !self.accepts(to, card) {
                         continue;
                     }
-                    let mut score = base + 200;
-                    if self.pile_len(to) == 0 {
-                        score -= 300;
-                    } else {
-                        score += 40;
+                    let into_room = self.pile_len(to) == 0;
+                    // A whole column onto an empty one is the same board with a
+                    // different number on it: it empties one column and fills
+                    // another, and nothing about the deal has moved.
+                    if into_room && index == 0 {
+                        continue;
                     }
-                    if card.rank == Rank::King && self.pile_len(to) == 0 {
-                        score -= 200;
+                    // Onto a card is worth a nudge over onto nothing, because a
+                    // king in an empty column is one fewer place to put a king.
+                    // A move that gains nothing is a shuffle whatever it lands
+                    // on, so it is not considered at all.
+                    if gain > 0 {
+                        let score = if into_room { gain - 100 } else { gain + 40 };
+                        consider(score, Selection { pile, index }, to, count);
                     }
-                    consider(score, Selection { pile, index }, to, count);
                 }
             }
         }
@@ -1099,35 +1108,14 @@ impl Game {
             }
         }
 
-        // Taking a card off a foundation is legal but almost never the move the
-        // player is looking for, so it is considered only as a last resort.
-        for foundation in 0..FOUNDATIONS {
-            let pile = Pile::Foundation(foundation);
-            let Some(index) = self.foundations[foundation].len().checked_sub(1) else {
-                continue;
+        if let Some((_, selection, to, count)) = best {
+            return Hint::Move {
+                from: selection.pile,
+                index: selection.index,
+                to,
+                count,
+                words: self.move_sentence(selection, to, count),
             };
-            let Some(card) = self.card_at(pile, index) else {
-                continue;
-            };
-            for destination in 0..COLUMNS {
-                let to = Pile::Tableau(destination);
-                if !self.accepts(to, card) {
-                    continue;
-                }
-                consider(-100, Selection { pile, index }, to, 1);
-            }
-        }
-
-        if let Some((score, selection, to, count)) = best {
-            if score >= 0 {
-                return Hint::Move {
-                    from: selection.pile,
-                    index: selection.index,
-                    to,
-                    count,
-                    words: self.move_sentence(selection, to, count),
-                };
-            }
         }
         if !self.stock.is_empty() {
             return Hint::Draw {
@@ -1143,18 +1131,48 @@ impl Game {
                 words: "Turn the waste back over.".to_owned(),
             };
         }
-        if let Some((_, selection, to, count)) = best {
-            return Hint::Move {
-                from: selection.pile,
-                index: selection.index,
-                to,
-                count,
-                words: self.move_sentence(selection, to, count),
-            };
-        }
+        // Nothing worth doing, and nothing left to turn over. Taking a card
+        // back off a foundation is legal here and is not a suggestion: it is
+        // how the player undoes their own progress, and the hint would then
+        // send the same card home again.
         Hint::None {
-            words: "No moves left. Undo, or start a new game.".to_owned(),
+            words: "No useful move left. Undo, or start a new game.".to_owned(),
         }
+    }
+
+    /// What moving the run at `column`/`index` *to another column* is worth,
+    /// and zero when it is a shuffle.
+    ///
+    /// Three things make a column-to-column move worth pointing at: it turns a
+    /// face-down card over, it empties a column, or it uncovers a card that can
+    /// now go home. A move that does none of them has not moved the deal on,
+    /// only the picture — and because such a move is legal in both directions
+    /// whenever both columns end in a matching rank and colour, suggesting it
+    /// means suggesting the reverse of it next time Hint is pressed.
+    fn column_gain(&self, column: usize, index: usize) -> i32 {
+        let cards = &self.tableau[column];
+        let mut gain = 0;
+        if index == 0 {
+            // The column the run leaves is left with nothing in it, which is a
+            // place to put a king.
+            gain += 700;
+        }
+        if index == cards.up && cards.up > 0 {
+            // The run starts at the face-up boundary, so the card under it is
+            // face down: moving the run is what turns it over.
+            gain += 1_000;
+        } else if index > cards.up {
+            // The run has a face-up card under it, and that card becomes a
+            // column top. It is worth something only if it can go home —
+            // otherwise the next press of Hint is free to suggest moving the
+            // run back onto it.
+            if let Some(card) = self.card_at(Pile::Tableau(column), index - 1) {
+                if self.foundation_for(card).is_some() {
+                    gain += 400;
+                }
+            }
+        }
+        gain
     }
 
     /// The value stored for this game, or `None` when there is nothing worth
@@ -2200,6 +2218,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A hint that is followed must move the deal on, not move a card back and
+    /// forth between two columns for as long as the player keeps pressing it.
+    ///
+    /// This is the regression the scoring rewrite exists for: a move between
+    /// two columns is legal in both directions whenever both end in a matching
+    /// rank and colour, so "is this legal" is not the question — "does anything
+    /// about the deal change" is. Draws are excluded because turning the stock
+    /// is allowed to reach a position it has been in before; a *move* is not.
+    #[test]
+    fn following_the_hint_never_walks_in_circles() {
+        for seed in 0..25u64 {
+            let mut game = Game::dealt(Difficulty::Medium, Scoring::Standard, seed);
+            let mut seen: Vec<String> = Vec::new();
+            for _ in 0..40 {
+                let hint = game.hint();
+                match &hint {
+                    Hint::Move {
+                        from, index, to, ..
+                    } => {
+                        let before = position(&game);
+                        let _ = game.select(*from, *index);
+                        let _ = game.drop(*to);
+                        assert_ne!(
+                            before,
+                            position(&game),
+                            "seed {seed}: the hint asked for a move that changed nothing"
+                        );
+                        let after = position(&game);
+                        assert!(
+                            !seen.contains(&after),
+                            "seed {seed}: the hint walked back into a position it had \
+                             already reached — \"{}\", {from:?}#{index} to {to:?}",
+                            hint.words()
+                        );
+                        seen.push(after);
+                    }
+                    Hint::Draw { .. } | Hint::Recycle { .. } => {
+                        // The stock is new information, so positions reached
+                        // before it may legitimately be reached again.
+                        seen.clear();
+                        let _ = game.draw();
+                    }
+                    Hint::None { .. } => break,
+                }
+            }
+        }
+    }
+
+    /// Every pile, its cards and which of them are face down: the deal's
+    /// position, without the counters around it.
+    fn position(game: &Game) -> String {
+        let mut out = String::new();
+        for pile in Pile::ALL {
+            out.push_str(pile.slug().as_str());
+            out.push(':');
+            for (index, &card) in game.pile(pile).iter().enumerate() {
+                out.push_str(&card.to_string());
+                if game.is_face_down(pile, index) {
+                    out.push('v');
+                }
+                out.push(',');
+            }
+            out.push('|');
+        }
+        out
     }
 
     #[test]

@@ -43,6 +43,12 @@
      meaningful in static markup when the deck is still being shuffled. -->
 <div class="board-wrap">
   <div id="board" role="group" aria-labelledby="title" aria-describedby="help"></div>
+  <!-- Where the hinted move goes. The board rings the cards to pick up; this
+       ring says where they land, which is the half a ring around one card
+       cannot say. It is a sibling of the board rather than a child so it paints
+       over every card without needing a z-index the board's own numbering
+       would have to make room for. -->
+  <div id="hint-mark" class="hint-mark" hidden aria-hidden="true"></div>
 </div>
 
 <p id="help" class="visually-hidden">Tap a card to pick it up, then tap where it should go. Drag works too. Arrow keys move around the board, Enter picks up or drops, U undoes, H hints and D turns the stock.</p>

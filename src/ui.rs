@@ -12,7 +12,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::board::{Place, Scene};
-use crate::board_ui::Intent;
+use crate::board_ui::{BoardUi, Intent};
 use crate::card::deck;
 use crate::game::{
     Difficulty, Game, Hint, Options, Pile, Report, Scoring, OPTIONS_KEY, STORAGE_KEY,
@@ -237,6 +237,10 @@ impl Rules for Klondike {
         self.words.take()
     }
 
+    fn decorate(&mut self, board: &BoardUi) {
+        self.paint_hint(board);
+    }
+
     fn option_values(&self) -> Vec<(&'static str, String)> {
         vec![
             ("difficulty", self.options.difficulty.slug().to_owned()),
@@ -301,6 +305,47 @@ impl Rules for Klondike {
 }
 
 impl Klondike {
+    /// Mark where the hinted move goes.
+    ///
+    /// A ring around a card says "this one" and nothing else: the player is
+    /// left to work out the destination from a sentence, and a sentence about
+    /// "foundation 3" is a poor substitute for pointing at it. So the move is
+    /// drawn as both halves — the run to pick up, which the board already
+    /// rings, and the place it lands. A hint about the stock needs no second
+    /// mark: the stock is both ends of it.
+    fn paint_hint(&self, board: &BoardUi) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Some(mark) = document.get_element_by_id("hint-mark") else {
+            return;
+        };
+        let Some(Hint::Move { to, .. }) = self.hint else {
+            let _ = mark.set_attribute("hidden", "");
+            return;
+        };
+        let place = to.place();
+        let scene = board.scene();
+        let landing = scene
+            .slot(place)
+            .and_then(|slot| slot.top().and_then(|card| board.layout().card(card.id)))
+            .or_else(|| board.layout().place(place));
+        let Some((x, y)) = landing else {
+            let _ = mark.set_attribute("hidden", "");
+            return;
+        };
+        let _ = mark.remove_attribute("hidden");
+        let _ = mark.set_attribute(
+            "style",
+            &format!(
+                "left:{x}px;top:{y}px;width:{}px;height:{}px;--cw:{}px",
+                board.layout().card_w,
+                board.layout().card_h,
+                board.layout().card_w
+            ),
+        );
+    }
+
     /// Say what the game says, then let the shell know the board moved.
     /// Keep whatever the game said, for the shell to put under the board.
     fn show(&mut self, report: Report) {

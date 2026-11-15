@@ -388,6 +388,22 @@ h1 {
   to { filter: brightness(1.18); }
 }
 
+/* The other half of a hint: the place the run goes. The ring on the card says
+   what to pick up, and this says where to put it, in the same colour and with
+   the same pulse — so a hint is one move drawn in two places rather than a
+   marked card and a sentence about a column number. It never takes a press: it
+   is drawn over the destination, which must stay pressable underneath. */
+.hint-mark {
+  position: absolute;
+  z-index: 900;
+  pointer-events: none;
+  border-radius: calc(var(--cw, 60px) * .08);
+  box-shadow: 0 0 0 calc(var(--cw, 60px) * .035) var(--hint);
+  animation: hint 1s ease-in-out infinite alternate;
+}
+
+.hint-mark[hidden] { display: none; }
+
 /* Controls. Four columns even when Finish is unavailable: a button that
    appears and disappears would move Undo under a thumb that is already there. */
 .tools {
@@ -698,6 +714,100 @@ h1 {
   .facts { gap: .8rem; }
   .tools button, .menu-button { font-size: .76rem; }
   #status { font-size: .72rem; }
+}
+
+/* A landscape screen, where the height is the scarce side.
+ *
+ * The table is laid out from the height it is given, so a row of controls under
+ * it is not free: on a phone on its side the four buttons and the line under
+ * them were taking two thirds of the height the cards got, and the cards came
+ * out at half the size of the same deal held upright. Nothing was broken — the
+ * board is simply laid out in the short dimension, and every row of chrome
+ * above and below it is a row of cards lost.
+ *
+ * So in this shape the controls are not a row under the board at all: they are
+ * a pad against the right edge, where a thumb already is when the phone is held
+ * in two hands, and the board keeps the whole height. The facts move up
+ * beside them. Nothing is folded away, so no control needs a second tap to
+ * reach — the four targets stay 44px, because a layout that buys space by
+ * making the buttons harder to hit has not solved anything.
+ *
+ * The condition is the *shape*, not the device: a short wide window on a
+ * desktop gets the same treatment, and a tall one never does. */
+@media (min-width: 30rem) and (max-height: 34rem) {
+  body {
+    display: grid;
+    /* The page's own `align-items: center` is right for a column of rows and
+       wrong for a grid: centred is the one alignment that stops the board from
+       filling its area, and a board with no height is a table with no cards. */
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr) 7rem;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "head  head"
+      "board facts"
+      "board tools"
+      "status status";
+    max-width: calc(var(--page) + 7rem);
+    margin: 0 auto;
+    column-gap: .45rem;
+    row-gap: .3rem;
+  }
+
+  header { grid-area: head; }
+  .board-wrap { grid-area: board; }
+  #status { grid-area: status; }
+
+  /* One fact per line: the rail is far narrower than one line of three. The
+     row is the flexible one, so the facts take the space and stay at the top
+     of the rail while the pad is pinned to the bottom of it. */
+  .facts {
+    grid-area: facts;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: .1rem;
+    padding: 0;
+    font-size: .72rem;
+  }
+
+  /* Two columns, so the pad is a block rather than a stack as tall as the
+     board, and it sits at the bottom of the rail: that is where a thumb is,
+     and it keeps the pad from crowding the facts above it. */
+  .tools {
+    grid-area: tools;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row;
+    gap: .3rem;
+    align-content: end;
+  }
+
+  .tools button, .menu-button {
+    padding: .3rem .2rem;
+    font-size: .76rem;
+  }
+}
+
+/* A short landscape window that is not a phone at all — a narrow split on a
+   desktop, a resized window. Three facts stacked in the rail are taller than
+   the room the rail has, and a column that does not fit does not shrink: it
+   runs into the pad below it. So in this shape the facts get a row of their own
+   above the board and read left to right, which is what the width is for. It
+   costs the board a line, and there is nothing else left to give. */
+@media (min-width: 30rem) and (max-height: 13rem) {
+  body {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head  head"
+      "facts facts"
+      "board tools"
+      "status status";
+  }
+
+  .facts {
+    flex-direction: row;
+    gap: .8rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -110,6 +110,52 @@ label is the button, and the scrim and the Done control are labels for the same
 box. A panel opened only by a `click` listener does not open on a phone; this
 family has learned that once already.
 
+**A hint marks both ends of the move, and only ever suggests a move that
+changes the deal.** Two faults, and both made Hint useless in a way no test
+noticed:
+
+- It scored *legal* moves, and a move between two columns is legal in both
+  directions whenever both end in a matching rank and colour. So the hint named
+  a card, the player followed it, and the next press named the card it had just
+  left — a card that cannot be improved where it is, and a column that gets
+  nothing, pointed at alternately forever. A move is now worth considering only
+  if it turns a face-down card over, empties a column, or uncovers a card that
+  can go home (`Game::column_gain`); a whole column onto an empty one is
+  excluded outright, because it empties one column and fills another and the
+  deal has not moved. `following_the_hint_never_walks_in_circles` follows 25
+  deals for 40 presses each and refuses a repeat, and it fails on the old
+  scoring.
+- It drew a ring around the card to pick up and said the destination in words.
+  A ring says "this one" and cannot say "there", and "foundation 3" is a poor
+  substitute for pointing at the third foundation. The destination now gets the
+  same ring in the same colour (`#hint-mark`, painted by `Klondike::paint_hint`),
+  and a hint about the stock needs no second mark because the stock is both ends
+  of it.
+
+The mark is `pointer-events: none` and a sibling of the board, not a child: the
+destination must stay pressable underneath it, and the board's own stacking
+context is what keeps its hundreds of card `z-index`es out of the page.
+
+**Controls move to a side rail on a wide short screen.** The board is laid out
+from the *height* the page gives it, so every row of chrome above and below is a
+row of cards lost. Held upright there is room to spare; held sideways the four
+buttons and the status line were taking most of the height the cards got — 51px
+cards on a rotated phone, 36px on a small one, half what the same deal got
+upright. In a landscape shape (`min-width: 30rem and max-height: 34rem`) the pad
+goes against the right edge, two rows of two, with the facts stacked above it in
+the same rail, and the table keeps the full height: 73px and 57px for those two
+sizes.
+
+Nothing is folded behind a disclosure, and that was the decision rather than a
+shortcut: a control that needs two taps to reach is a control a player mid-game
+does not use, and the reason to fold them is height, which the rail already
+reclaims. Every target stays 44px tall, because buying space by making the
+buttons harder to hit has not solved anything. The condition is the *shape*, not
+the device: a short wide window on a desktop gets the same treatment and a tall
+one never does. Below `13rem` of height — a narrow split window, not a phone —
+three stacked facts no longer fit the rail, so they take a row above the board
+and read left to right instead.
+
 **A tap is a pointer gesture, not a `click`.** `pointerdown` records a press,
 `pointermove` past a slop threshold turns it into a drag, `pointerup` decides
 between the two, and `pointercancel` abandons it. `click` is handled only for
@@ -119,7 +165,7 @@ move every card twice.
 ## Verification
 
 ```bash
-cargo test --locked                 # 45 tests: the rules, the save format, the shell
+cargo test --locked                 # the rules, the save format, the shell
 cargo clippy --locked --all-targets -- -D warnings
 cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
 ```
@@ -134,7 +180,10 @@ written down so the next reader knows what "verified" covered.
 
 What is *not* covered by a test: the layout's geometry. Card sizes and fan
 offsets depend on the box the board gets, and the only honest check is to look at
-it at a few sizes.
+it at a few sizes. The landscape rail was checked that way at 844x390, 667x375,
+640x280, 568x320, 640x240, 480x200 and 1400x420, with portrait 390x844 and
+360x640 as the controls that must not have changed, and by measuring the board's
+box and one card's width in the browser rather than trusting the picture.
 
 ## Sharing the card format with Spider Solitaire
 
