@@ -39,6 +39,12 @@ const TICK_MS: i32 = 1_000;
 /// How long a hint stays lit.
 const HINT_MS: i32 = 2_600;
 
+/// How often the second tool gets another slice of its work.
+const INSPECT_MS: i32 = 16;
+
+/// What the line under the board says while that work is running.
+const INSPECTING: &str = "Checking the deal…";
+
 /// What one game tells the shell about itself.
 ///
 /// Deliberately small: every item is a fact the *page* needs and the game
@@ -99,19 +105,45 @@ pub trait Rules {
     /// The rule summary the menu shows.
     fn summary(&self) -> String;
 
-    /// The one extra button: Klondike's automatic finish, Spider's deal.
+    /// The one extra button: Klondike's finish, Spider's deal. `None` hides it.
     fn action_label(&self) -> Option<&'static str>;
 
     /// Whether that button can be pressed now.
     fn action_enabled(&self) -> bool;
 
     /// Press it.
+    fn action(&mut self);
+
+    /// Do one piece of work the game wants to do by itself, and say how many
+    /// milliseconds until the next piece — `None` when there is nothing left.
     ///
-    /// The answer says whether pressing it again would do something: a deal is
-    /// `Once` (one press, one deal), while an automatic finish repeats until
-    /// the board is done. The interval belongs to the shell, so an app never
-    /// holds a timer handle it could leak.
-    fn action(&mut self) -> Repeat;
+    /// The shell asks after every change, which is what "and then it finishes
+    /// itself" is made of: an app with nothing to do by itself returns `None`,
+    /// which is the default. The interval belongs to the shell, so no app holds
+    /// a timer handle it could leak.
+    fn automatic(&mut self) -> Option<i32> {
+        None
+    }
+
+    /// The second optional tool: a question the game can answer about the deal,
+    /// in the position its own label asks it. `None` hides the button.
+    fn inspect_label(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Whether that tool can be used now.
+    fn inspect_enabled(&self) -> bool {
+        true
+    }
+
+    /// Do one slice of the tool's work and say whether there is more.
+    ///
+    /// It is a slice because the work may be long: the page comes back to it
+    /// between frames, so the board stays alive instead of freezing for the
+    /// length of the answer.
+    fn inspect(&mut self) -> Inspect {
+        Inspect::Done(None)
+    }
 
     /// The last thing the game said, taken — `None` when it said nothing worth
     /// showing. The shell puts it under the board.
@@ -160,13 +192,21 @@ pub trait Rules {
     fn restart(&mut self);
 }
 
-/// What pressing the extra button again would do.
+/// The answer from one slice of the second tool's work.
+pub enum Inspect {
+    /// Not finished: come back for another slice.
+    Busy,
+    /// Finished, with the words to put under the board — or `None` for silence.
+    Done(Option<String>),
+}
+
+/// A piece of work the page repeats on a timer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Repeat {
-    /// Nothing more: the action was complete.
-    Once,
-    /// Again, after this many milliseconds, until it says `Once`.
-    Every(i32),
+enum Job {
+    /// The game doing something by itself, such as finishing.
+    Automatic,
+    /// The second tool's work, a slice at a time.
+    Checking,
 }
 
 /// The page, as it runs.
@@ -181,8 +221,8 @@ pub struct Shell<R: Rules> {
     next_save: Cell<u32>,
     /// Bumped on every hint, so a stale timer cannot clear a newer one.
     hint_token: Cell<u32>,
-    /// The repeating action's interval handle, if one is running.
-    action_timer: Cell<Option<i32>>,
+    /// The repeating work in progress, and its interval handle.
+    job: Cell<Option<(Job, i32)>>,
 }
 
 impl<R: Rules + 'static> Shell<R> {
@@ -215,13 +255,17 @@ impl<R: Rules + 'static> Shell<R> {
             pending: Cell::new(0.0),
             next_save: Cell::new(10),
             hint_token: Cell::new(0),
-            action_timer: Cell::new(None),
+            job: Cell::new(None),
         }));
+        let weak = Rc::downgrade(&shared);
         {
             let mut shell = shared.borrow_mut();
             shell
                 .next_save
                 .set(shell.rules.elapsed().saturating_add(10));
+            // A game restored mid-finish carries on finishing, and the paint
+            // below already shows its first move.
+            shell.kick(&weak);
             shell.board.set_focus(focus.0, focus.1);
             shell.paint();
             if shell.rules.won() {
@@ -280,17 +324,29 @@ impl<R: Rules + 'static> Shell<R> {
 
     fn paint_tools(&self) {
         let won = self.rules.won();
+        // While the game is doing something by itself there is nothing to ask
+        // it and nothing to point at: a hint would be painted over by the next
+        // move, and a question about a deal that is already finishing has one
+        // answer. Undo stays available, because taking a card back is how the
+        // player stops it.
+        let busy = self.busy();
         if let Some(undo) = button(&self.document, "undo") {
             undo.set_disabled(won || !self.rules.can_undo());
         }
         if let Some(hint) = button(&self.document, "hint") {
-            hint.set_disabled(won);
+            hint.set_disabled(won || busy);
         }
         let label = self.rules.action_label();
         set_hidden(&self.document, "action", label.is_none());
         if let (Some(action), Some(label)) = (button(&self.document, "action"), label) {
             action.set_disabled(won || !self.rules.action_enabled());
             action.set_text_content(Some(label));
+        }
+        let label = self.rules.inspect_label();
+        set_hidden(&self.document, "inspect", label.is_none());
+        if let (Some(inspect), Some(label)) = (button(&self.document, "inspect"), label) {
+            inspect.set_disabled(won || busy || !self.rules.inspect_enabled());
+            inspect.set_text_content(Some(label));
         }
     }
 
@@ -308,10 +364,10 @@ impl<R: Rules + 'static> Shell<R> {
     }
 
     /// Answer one gesture.
-    fn act(&mut self, intent: Intent) {
-        self.rules.clear_hint();
+    fn act(&mut self, intent: Intent, shared: &Weak<RefCell<Self>>) {
+        self.interrupt();
         self.rules.act(intent);
-        self.after();
+        self.after(shared);
     }
 
     /// Show whatever the game said, then repaint.
@@ -330,7 +386,16 @@ impl<R: Rules + 'static> Shell<R> {
 
     /// Repaint after the game changed, and keep the focus and the saved game in
     /// step with it.
-    fn after(&mut self) {
+    fn after(&mut self, shared: &Weak<RefCell<Self>>) {
+        // Whatever the game wants to do by itself happens before the repaint,
+        // so the player sees one picture rather than a board and then a jump.
+        self.kick(shared);
+        self.refresh();
+    }
+
+    /// Everything a change has to be followed by: the words, the board, the
+    /// victory panel and the saved game.
+    fn refresh(&mut self) {
         self.speak();
         let focus = self.rules.default_focus();
         self.board.set_focus(focus.0, focus.1);
@@ -339,6 +404,114 @@ impl<R: Rules + 'static> Shell<R> {
             self.show_win();
         }
         self.save_game();
+    }
+
+    /// Start the game's own work, if it has some, and keep it going.
+    ///
+    /// This is the whole of "the Finish button happens by itself": the game is
+    /// asked after every change, so a deal that has just become a formality
+    /// finishes wherever the move that made it one came from, with no press and
+    /// no second start. A game with nothing of its own to do — every game but
+    /// Klondike's finish — returns `None` and nothing here runs.
+    fn kick(&mut self, shared: &Weak<RefCell<Self>>) {
+        if self.job.get().is_some() {
+            return;
+        }
+        let Some(ms) = self.rules.automatic() else {
+            return;
+        };
+        self.repeat(Job::Automatic, ms, shared);
+    }
+
+    /// Press the second tool.
+    ///
+    /// The work is done in slices between frames: the page answers in a fraction
+    /// of a second but keeps painting while it does, and the line under the
+    /// board says what is being done rather than leaving a dead button.
+    fn inspect(&mut self, shared: &Weak<RefCell<Self>>) {
+        if self.rules.won() || self.busy() || !self.rules.inspect_enabled() {
+            return;
+        }
+        self.stop_job();
+        match self.rules.inspect() {
+            Inspect::Busy => {
+                self.say(INSPECTING);
+                self.paint_tools();
+                self.repeat(Job::Checking, INSPECT_MS, shared);
+            }
+            Inspect::Done(words) => {
+                if let Some(words) = words {
+                    self.say(&words);
+                }
+                self.paint_tools();
+            }
+        }
+    }
+
+    /// One turn of a repeating job. True to keep going.
+    fn step(&mut self, job: Job) -> bool {
+        match job {
+            Job::Automatic => {
+                let more = self.rules.automatic().is_some();
+                self.refresh();
+                more
+            }
+            Job::Checking => match self.rules.inspect() {
+                Inspect::Busy => true,
+                Inspect::Done(words) => {
+                    if let Some(words) = words {
+                        self.say(&words);
+                    }
+                    self.paint_tools();
+                    false
+                }
+            },
+        }
+    }
+
+    fn repeat(&mut self, job: Job, ms: i32, shared: &Weak<RefCell<Self>>) {
+        self.stop_job();
+        let weak = Weak::clone(shared);
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            let Some(shared) = weak.upgrade() else {
+                return;
+            };
+            let mut shell = shared.borrow_mut();
+            if !shell.step(job) {
+                shell.stop_job();
+            }
+        });
+        match self
+            .window
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                closure.as_ref().unchecked_ref(),
+                ms,
+            ) {
+            Ok(handle) => {
+                self.job.set(Some((job, handle)));
+                closure.forget();
+            }
+            Err(error) => warn("could not start the repeating work", &error),
+        }
+    }
+
+    /// Stop whatever is repeating, if anything is.
+    fn stop_job(&mut self) {
+        if let Some((_, handle)) = self.job.take() {
+            self.window.clear_interval_with_handle(handle);
+        }
+    }
+
+    /// Stop the game's own work and any hint that is showing, because the board
+    /// is about to change underneath both.
+    fn interrupt(&mut self) {
+        self.stop_job();
+        self.rules.clear_hint();
+    }
+
+    /// True while the game is doing something by itself.
+    fn busy(&self) -> bool {
+        matches!(self.job.get(), Some((Job::Automatic, _)))
     }
 
     fn show_win(&mut self) {
@@ -389,9 +562,8 @@ impl<R: Rules + 'static> Shell<R> {
         }
     }
 
-    fn new_game(&mut self, restart: bool) {
-        self.stop_action();
-        self.rules.clear_hint();
+    fn new_game(&mut self, restart: bool, shared: &Weak<RefCell<Self>>) {
+        self.interrupt();
         if restart {
             self.rules.restart();
         } else {
@@ -399,22 +571,22 @@ impl<R: Rules + 'static> Shell<R> {
         }
         self.next_save.set(self.rules.elapsed().saturating_add(10));
         close_menu(&self.document);
-        self.after();
+        self.after(shared);
         self.save_options();
         self.board.focus_element();
     }
 
-    fn undo(&mut self) {
-        self.stop_action();
-        self.rules.clear_hint();
+    fn undo(&mut self, shared: &Weak<RefCell<Self>>) {
+        self.interrupt();
         self.rules.undo();
-        self.after();
+        self.after(shared);
     }
 
     fn hint(&mut self, shared: &Weak<RefCell<Self>>) {
-        if self.rules.won() {
+        if self.rules.won() || self.busy() {
             return;
         }
+        self.interrupt();
         let Some(words) = self.rules.hint() else {
             return;
         };
@@ -442,49 +614,11 @@ impl<R: Rules + 'static> Shell<R> {
         closure.forget();
     }
 
-    /// Press the extra button, and keep pressing it while it asks to repeat.
+    /// Press the extra button. Anything it starts, the game starts by itself.
     fn action(&mut self, shared: &Weak<RefCell<Self>>) {
-        match self.rules.action() {
-            Repeat::Once => self.after(),
-            Repeat::Every(ms) => {
-                self.after();
-                self.stop_action();
-                let weak = Weak::clone(shared);
-                let closure = Closure::<dyn FnMut()>::new(move || {
-                    let Some(shared) = weak.upgrade() else {
-                        return;
-                    };
-                    let mut shell = shared.borrow_mut();
-                    match shell.rules.action() {
-                        Repeat::Once => {
-                            shell.stop_action();
-                            shell.after();
-                        }
-                        Repeat::Every(_) => {
-                            shell.after();
-                        }
-                    }
-                });
-                let window = self.window.clone();
-                match window.set_interval_with_callback_and_timeout_and_arguments_0(
-                    closure.as_ref().unchecked_ref(),
-                    ms,
-                ) {
-                    Ok(handle) => {
-                        self.action_timer.set(Some(handle));
-                        closure.forget();
-                    }
-                    Err(error) => warn("could not start the repeating action", &error),
-                }
-            }
-        }
-    }
-
-    /// Stop the repeating action, if one is running.
-    fn stop_action(&mut self) {
-        if let Some(handle) = self.action_timer.take() {
-            self.window.clear_interval_with_handle(handle);
-        }
+        self.interrupt();
+        self.rules.action();
+        self.after(shared);
     }
 
     fn say(&self, words: &str) {
@@ -552,7 +686,8 @@ fn bind_board<R: Rules + 'static>(board: &Element, shared: &Rc<RefCell<Shell<R>>
             let point = point_of(event.as_ref(), &board);
             let intent = app.borrow_mut().board.release(event.pointer_id(), point);
             if let Some(intent) = intent {
-                app.borrow_mut().act(intent);
+                let weak = Rc::downgrade(&app);
+                app.borrow_mut().act(intent, &weak);
             }
         })
     };
@@ -578,6 +713,7 @@ fn bind_board<R: Rules + 'static>(board: &Element, shared: &Rc<RefCell<Shell<R>>
                 return;
             }
             let point = point_of(event.as_ref(), &board);
+            let weak = Rc::downgrade(&app);
             let mut shell = app.borrow_mut();
             if shell.board.press(1, point).is_none() {
                 return;
@@ -585,7 +721,7 @@ fn bind_board<R: Rules + 'static>(board: &Element, shared: &Rc<RefCell<Shell<R>>
             shell.board.lift(0);
             let intent = shell.board.release(1, point);
             if let Some(intent) = intent {
-                shell.act(intent);
+                shell.act(intent, &weak);
             }
         })
     };
@@ -596,8 +732,12 @@ fn bind_board<R: Rules + 'static>(board: &Element, shared: &Rc<RefCell<Shell<R>>
 fn bind_tools<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<R>>>) {
     if let Some(undo) = button(document, "undo") {
         let app = Rc::clone(shared);
+        let weak = Rc::downgrade(&app);
         let closure = Closure::<dyn FnMut()>::new(move || {
-            app.borrow_mut().undo();
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            app.borrow_mut().undo(&weak);
         });
         listen(&undo, "click", closure.as_ref().unchecked_ref());
         closure.forget();
@@ -626,10 +766,26 @@ fn bind_tools<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell
         listen(&action, "click", closure.as_ref().unchecked_ref());
         closure.forget();
     }
+    if let Some(inspect) = button(document, "inspect") {
+        let app = Rc::clone(shared);
+        let weak = Rc::downgrade(&app);
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            app.borrow_mut().inspect(&weak);
+        });
+        listen(&inspect, "click", closure.as_ref().unchecked_ref());
+        closure.forget();
+    }
     if let Some(new) = button(document, "won-new") {
         let app = Rc::clone(shared);
+        let weak = Rc::downgrade(&app);
         let closure = Closure::<dyn FnMut()>::new(move || {
-            app.borrow_mut().new_game(false);
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            app.borrow_mut().new_game(false, &weak);
         });
         listen(&new, "click", closure.as_ref().unchecked_ref());
         closure.forget();
@@ -667,16 +823,24 @@ fn bind_menu<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<
     }
     if let Some(new) = button(document, "new") {
         let app = Rc::clone(shared);
+        let weak = Rc::downgrade(&app);
         let closure = Closure::<dyn FnMut()>::new(move || {
-            app.borrow_mut().new_game(false);
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            app.borrow_mut().new_game(false, &weak);
         });
         listen(&new, "click", closure.as_ref().unchecked_ref());
         closure.forget();
     }
     if let Some(restart) = button(document, "restart") {
         let app = Rc::clone(shared);
+        let weak = Rc::downgrade(&app);
         let closure = Closure::<dyn FnMut()>::new(move || {
-            app.borrow_mut().new_game(true);
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            app.borrow_mut().new_game(true, &weak);
         });
         listen(&restart, "click", closure.as_ref().unchecked_ref());
         closure.forget();
@@ -707,6 +871,7 @@ fn option_ids(document: &Document) -> Vec<String> {
 
 fn bind_keys<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<R>>>) {
     let app = Rc::clone(shared);
+    let handler = Rc::downgrade(shared);
     let closure = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
         if is_form_control(event.target()) {
             return;
@@ -742,29 +907,31 @@ fn bind_keys<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<
             }
             "Enter" | " " => {
                 let (place, index) = shell.board.focus();
-                shell.act(Intent::Tap { place, index });
+                shell.act(Intent::Tap { place, index }, &handler);
                 true
             }
             "Escape" => {
-                shell.act(Intent::Back);
+                shell.act(Intent::Back, &handler);
                 true
             }
             "u" | "U" => {
-                shell.undo();
+                shell.undo(&handler);
                 true
             }
             "h" | "H" => {
-                let weak = Rc::downgrade(&app);
-                shell.hint(&weak);
+                shell.hint(&handler);
                 true
             }
             "a" | "A" => {
-                let weak = Rc::downgrade(&app);
-                shell.action(&weak);
+                shell.action(&handler);
+                true
+            }
+            "c" | "C" => {
+                shell.inspect(&handler);
                 true
             }
             "z" | "Z" if event.ctrl_key() || event.meta_key() => {
-                shell.undo();
+                shell.undo(&handler);
                 true
             }
             _ => false,

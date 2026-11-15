@@ -15,9 +15,30 @@ use crate::board::{Place, Scene};
 use crate::board_ui::{BoardUi, Intent};
 use crate::card::deck;
 use crate::game::{
-    Difficulty, Game, Hint, Options, Pile, Report, Scoring, OPTIONS_KEY, STORAGE_KEY,
+    check_words, Difficulty, Game, Hint, Options, Pile, Report, Scoring, OPTIONS_KEY, STORAGE_KEY,
 };
-use crate::shell::{fresh_seed, Repeat, Rules};
+use crate::shell::{fresh_seed, Inspect, Rules};
+use crate::solver::{Solver, Verdict};
+
+/// How long the automatic finish waits between cards, so it can be watched.
+const FINISH_MS: i32 = 140;
+
+/// How many positions one slice of a stuck check examines.
+///
+/// A slice is measured in positions rather than milliseconds because the search
+/// is the same work whatever the device, so the page stays inside a frame's
+/// worth of work on a phone and a desktop both. Measured on this box the walk
+/// examines about 1.7 million positions a second, so a slice is some ten
+/// milliseconds of work: the board keeps moving, and a check is done in about a
+/// second because the page takes a slice a frame.
+const CHECK_SLICE: u64 = 18_000;
+
+/// How many positions a check may examine in all before it says it is not sure.
+///
+/// A hundred slices, so the longest a player waits is under two seconds. That
+/// is the whole of the budget: it is a question about patience, not about
+/// cards, and it is spent on the deals that need it rather than on every deal.
+const CHECK_BUDGET: u64 = 1_200_000;
 
 /// Start the app.
 ///
@@ -42,6 +63,8 @@ struct Klondike {
     game: Game,
     options: Options,
     hint: Option<Hint>,
+    /// The stuck check in progress, if the player asked for one.
+    check: Option<Solver>,
     /// What the game last said, waiting to be shown.
     words: Option<String>,
 }
@@ -52,6 +75,7 @@ impl Default for Klondike {
             game: Game::new(Options::default().difficulty, Options::default().scoring, 0),
             options: Options::default(),
             hint: None,
+            check: None,
             words: None,
         }
     }
@@ -122,17 +146,29 @@ impl Klondike {
         self.game.drop(to)
     }
 
-    /// One card of the automatic finish. The shell repeats this until it says
-    /// the board is done, so no timer handle is ever held here.
-    fn auto_step(&mut self) -> Repeat {
+    /// A deal that has become a formality finishes itself.
+    ///
+    /// The shell asks this after every change, so there is no button to press
+    /// and no second start: the move that uncovers the last card is the move
+    /// that begins the finish. When the player takes a card back out of it the
+    /// game holds, and the Finish button is what sets it going again.
+    fn finish_step(&mut self) -> Option<i32> {
+        if !self.game.finishing() {
+            return None;
+        }
         let Some(report) = self.game.autocomplete_step() else {
-            return Repeat::Once;
+            // Nothing can go home just now — every card is up, and a run still
+            // has to be moved by hand before the next one can. Say nothing: the
+            // player's own move is the sentence that belongs on screen, and the
+            // finish asks again after their next one. Nothing is held, so it
+            // takes over the moment a card is reachable again.
+            return None;
         };
         self.show(report);
         if self.game.won() {
-            Repeat::Once
+            None
         } else {
-            Repeat::Every(140)
+            Some(FINISH_MS)
         }
     }
 }
@@ -174,6 +210,9 @@ impl Rules for Klondike {
 
     fn clear_hint(&mut self) {
         self.hint = None;
+        // A check answers a question about one position, so the moment the
+        // board moves the answer is about a deal that no longer exists.
+        self.check = None;
     }
 
     fn won(&self) -> bool {
@@ -219,18 +258,54 @@ impl Rules for Klondike {
     }
 
     fn action_label(&self) -> Option<&'static str> {
-        Some("Finish")
+        // The finish runs by itself, so its button exists for the one case that
+        // needs it: the deal is a formality, the player took a card back out of
+        // it, and now they want it done after all. It appears only when the
+        // board is ready, so it is never a button that cannot do anything — a
+        // control that is always there and almost never works teaches the
+        // player that controls do nothing.
+        (self.game.finish_held() && self.game.can_autocomplete()).then_some("Finish")
     }
 
     fn action_enabled(&self) -> bool {
-        self.game.can_autocomplete()
+        self.game.finish_held() && self.game.can_autocomplete()
     }
 
-    fn action(&mut self) -> Repeat {
-        if !self.game.can_autocomplete() {
-            return Repeat::Once;
+    fn action(&mut self) {
+        self.game.resume_finish();
+    }
+
+    fn automatic(&mut self) -> Option<i32> {
+        self.finish_step()
+    }
+
+    fn inspect_label(&self) -> Option<&'static str> {
+        Some("Stuck?")
+    }
+
+    fn inspect_enabled(&self) -> bool {
+        self.check.is_none()
+    }
+
+    fn inspect(&mut self) -> Inspect {
+        if self.check.is_none() {
+            self.check = Solver::new(&self.game, CHECK_BUDGET);
+            if self.check.is_none() {
+                // A board the search cannot read is one it cannot answer for.
+                return Inspect::Done(Some(check_words(Verdict::Unclear)));
+            }
         }
-        self.auto_step()
+        let verdict = self
+            .check
+            .as_mut()
+            .and_then(|check| check.step(CHECK_SLICE));
+        match verdict {
+            None => Inspect::Busy,
+            Some(verdict) => {
+                self.check = None;
+                Inspect::Done(Some(check_words(verdict)))
+            }
+        }
     }
 
     fn take_words(&mut self) -> Option<String> {

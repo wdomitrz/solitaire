@@ -51,12 +51,18 @@
   <div id="hint-mark" class="hint-mark" hidden aria-hidden="true"></div>
 </div>
 
-<p id="help" class="visually-hidden">Tap a card to pick it up, then tap where it should go. Drag works too. Arrow keys move around the board, Enter picks up or drops, U undoes, H hints and D turns the stock.</p>
+<p id="help" class="visually-hidden">Tap a card to pick it up, then tap where it should go. Drag works too. Arrow keys move around the board, Enter picks up or drops, U undoes, H hints and C checks the deal.</p>
 
 <div class="tools">
   <button id="undo" type="button">Undo</button>
   <button id="hint" type="button">Hint</button>
-  <button id="action" type="button" disabled>Finish</button>
+  <!-- The finish runs by itself the moment every card is uncovered, so this
+       button is hidden except when the player has taken a card back out of it.
+       The shell hides it; the markup says nothing more than that it exists. -->
+  <button id="action" type="button" disabled hidden>Finish</button>
+  <!-- A question about the deal rather than a move in it: it answers whether
+       there is a way to win from here, and says so when it cannot tell. -->
+  <button id="inspect" type="button">Stuck?</button>
   <input id="menu" type="checkbox" class="menu-toggle visually-hidden" aria-controls="menu-panel">
   <label for="menu" class="menu-button"><span>Menu</span></label>
 </div>

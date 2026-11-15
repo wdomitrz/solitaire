@@ -509,6 +509,57 @@ fn every_element_the_shell_renders_is_written_by_the_app() {
     }
 }
 
+/// The row of tools carries no control that is dead on arrival.
+///
+/// Each button in `.tools` is one the shared shell binds and paints; the two
+/// optional ones — the extra action and the game's own question — start hidden
+/// in the markup, so a page whose app never loads shows three working tools
+/// rather than five, two of which do nothing. The shell is what reveals them,
+/// which is also what makes `hidden` in the markup honest: a button that the
+/// script always hides could just as well not be in the file, and a button that
+/// the script never reveals is one nobody can press.
+#[test]
+fn every_tool_in_the_row_is_bound_and_painted() {
+    let page = shell();
+    let row = page
+        .split("<div class=\"tools\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</div>").next())
+        .expect("the page has a row of tools");
+    let shell_rs = read("src/shell.rs");
+    let mut buttons = 0;
+    for chunk in row.split("<button").skip(1) {
+        let opening = chunk.split('>').next().unwrap_or_default();
+        let id = opening
+            .split("id=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("every tool in the row has an id");
+        buttons += 1;
+        assert!(
+            shell_rs.contains(&format!("\"{id}\"")),
+            "#{id} is in the row but the shared shell never binds or paints it"
+        );
+    }
+    assert!(buttons >= 3, "the row lost its tools: {row}");
+
+    // The two optional tools are hidden until the game asks for them.
+    for id in ["action", "inspect"] {
+        let opening = row
+            .split("<button")
+            .find(|chunk| chunk.contains(&format!("id=\"{id}\"")))
+            .expect("the optional tool is in the row");
+        let opening = opening.split('>').next().unwrap_or_default();
+        let hidden_by_default = opening.contains(" hidden");
+        assert_eq!(
+            hidden_by_default,
+            id == "action",
+            "#{id}: the finish starts hidden because the game runs it by itself; \
+             the question is there from the first deal"
+        );
+    }
+}
+
 /// A card's class list is built in exactly one place.
 ///
 /// `.card.red` is the rule that paints a red rank red, so a class list that

@@ -404,11 +404,13 @@ h1 {
 
 .hint-mark[hidden] { display: none; }
 
-/* Controls. Four columns even when Finish is unavailable: a button that
-   appears and disappears would move Undo under a thumb that is already there. */
+/* Controls. One column per button, however many are showing: the row is asked
+   to be as wide as its buttons, and a hidden one leaves no hole. Undo stays
+   first either way, so the one button a thumb goes to by habit never moves. */
 .tools {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: .35rem;
 }
 
@@ -440,11 +442,6 @@ h1 {
 }
 
 .tools button[hidden] { display: none; }
-
-/* Three buttons and a menu when the game has no extra action; four otherwise.
-   The grid follows what is visible, so a game without one does not leave a
-   hole. */
-.tools { grid-auto-flow: column; grid-auto-columns: 1fr; }
 
 .tools button:disabled {
   opacity: .42;
@@ -719,18 +716,18 @@ h1 {
 /* A landscape screen, where the height is the scarce side.
  *
  * The table is laid out from the height it is given, so a row of controls under
- * it is not free: on a phone on its side the four buttons and the line under
- * them were taking two thirds of the height the cards got, and the cards came
- * out at half the size of the same deal held upright. Nothing was broken — the
- * board is simply laid out in the short dimension, and every row of chrome
- * above and below it is a row of cards lost.
+ * it is not free: on a phone on its side the buttons and the line under them
+ * were taking two thirds of the height the cards got, and the cards came out at
+ * half the size of the same deal held upright. Nothing was broken — the board
+ * is simply laid out in the short dimension, and every row of chrome above and
+ * below it is a row of cards lost.
  *
  * So in this shape the controls are not a row under the board at all: they are
  * a pad against the right edge, where a thumb already is when the phone is held
  * in two hands, and the board keeps the whole height. The facts move up
  * beside them. Nothing is folded away, so no control needs a second tap to
- * reach — the four targets stay 44px, because a layout that buys space by
- * making the buttons harder to hit has not solved anything.
+ * reach — every target stays 44px, because a layout that buys space by making
+ * the buttons harder to hit has not solved anything.
  *
  * The condition is the *shape*, not the device: a short wide window on a
  * desktop gets the same treatment, and a tall one never does. */

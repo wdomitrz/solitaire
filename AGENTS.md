@@ -15,6 +15,9 @@ applies here. What follows is what is specific to this game.
   how many cells each occupies, where the keyboard starts. Compiled for the
   host too, so `cargo test` checks the board's *arrangement* rather than only
   its arithmetic.
+- `src/solver.rs` — whether the deal can still be won: the positions it can
+  reach, and the walk that visits them. No `web-sys` either, so the verdicts are
+  tested natively.
 - `src/ui.rs` — the browser half: a `Rules` implementation and nothing else.
   The board itself is [`src/board_ui.rs`], the page around it is
   [`src/shell.rs`], and both are shared with the other solitaire.
@@ -154,15 +157,91 @@ The mark is `pointer-events: none` and a sibling of the board, not a child: the
 destination must stay pressable underneath it, and the board's own stacking
 context is what keeps its hundreds of card `z-index`es out of the page.
 
+**The finish happens by itself.** The Finish button used to be a chore: every
+card uncovered means the rest of the deal is a formality, and being asked to
+press a button (then wait, then watch) for a result that is no longer in doubt is
+work in place of play. So the page asks the game after every change whether it
+is now finishing (`Game::finishing`), and a deal that is starts at once —
+wherever the move that made it a formality came from, including a deal restored
+mid-finish on page load.
+
+Exactly one thing stops it: taking a card back out of a running finish with Undo
+sets `finish_held`, because an undo the finish immediately redoes is a broken
+undo. That leaves a **Finish** button in the row, and the button appears in
+exactly that state — the board ready and the finish held — so it is never a
+control that cannot do anything.
+
+A board with every card up and nothing that can go home is *not* stopped, and
+deliberately so. Every card being face up does not mean every card is reachable:
+a run moved by hand can uncover the one that was in the way, so the finish asking
+again after the next move is right and a flag saying "over" would be wrong. The
+step returns nothing, the page stops its timer, and the player's own move is what
+is on the status line — the finish takes over again the moment a card is
+reachable.
+
+**"Stuck?" answers a question the hint cannot, and says which answer it has.**
+`src/solver.rs` searches the positions reachable from the current board for a
+won one. The three answers are kept apart on purpose:
+
+- **Not stuck** — a winning line exists. The search reached a won position.
+- **Stuck** — every reachable position was visited and none of them wins.
+- **Not sure** — the budget ran out first.
+
+`Stuck` is a claim the search has *proved*, so it may only be said when the walk
+finished; `Not sure` is the search admitting it did not get far enough. Printing
+the first when it means the second would cost a player a game they could still
+have won, so the two never share a sentence (`check_words`).
+
+Loops are the whole reason this is a search and not a move count. A deal whose
+only moves lead back to where they came from is dead, not "still exploring", and
+the transposition table is what distinguishes the two: every position reached is
+recorded by a hash of exactly the cards and counts in play, so a move back onto a
+board already seen is dropped instead of followed for ever. The count of redeals
+is part of that hash only when the deal limits it — with unlimited passes, a
+board turned over twice and the same board turned over three times are the same
+place to play from, and telling them apart is what would stop the walk from
+ever closing.
+
+Two moves are deliberately not generated, both because they are the same board
+under another name: a whole column onto an empty column, and a card onto an empty
+column that is not the first empty one. Every empty column is interchangeable, so
+collapsing them is what keeps the search from re-walking the same position under
+every numbering of the columns.
+
+`Position` is a *second* copy of Klondike's rules, small and copyable because the
+walk copies a board tens of thousands of times. Two tests hold the copies
+together, and they are the reason the verdict can be trusted at all: one plays
+every move the search generates on a real `Game` and requires the boards to
+match, and the other enumerates every move the *game* allows and requires the
+search to offer it. The second is the one a "Stuck" verdict rests on — a search
+that silently skipped a move would call a winnable deal stuck.
+
+The walk is depth first with its own stack, so it runs in slices between frames
+rather than freezing the board for its whole length: 18 000 positions a slice, a
+hard budget of 1 200 000, and the line under the board says what is happening
+instead of leaving a dead button. Measured in the browser, the walk examines
+about 1.7 million positions a second and the full budget takes 1.1s at 60fps;
+most answers arrive long before it.
+
+Measured against the 99 positions a random player actually gets stuck in, the
+answer is `Not stuck` or `Stuck` for 96 of them, and the slowest of those takes
+0.12s — because a game that has really run out of moves has a small graph to
+close. The rare deal the budget runs out on says so. From a *fresh* deal it is
+usually `Not sure`, which is the honest answer: a won position is fifty-odd moves
+away, and about half of Easy deals are proven winnable within the budget, which
+is not enough to justify waiting longer for the rest. The button is worth
+pressing when the deal feels stuck, which is exactly when the search can close
+the graph and answer.
+
 **Controls move to a side rail on a wide short screen.** The board is laid out
 from the *height* the page gives it, so every row of chrome above and below is a
 row of cards lost. Held upright there is room to spare; held sideways the four
 buttons and the status line were taking most of the height the cards got — 51px
 cards on a rotated phone, 36px on a small one, half what the same deal got
 upright. In a landscape shape (`min-width: 30rem and max-height: 34rem`) the pad
-goes against the right edge, two rows of two, with the facts stacked above it in
-the same rail, and the table keeps the full height: 73px and 57px for those two
-sizes.
+goes against the right edge, in a grid that wraps as the rail has room, with the
+facts stacked above it in the same rail, and the table keeps the full height:
+73px and 57px for those two sizes.
 
 Nothing is folded behind a disclosure, and that was the decision rather than a
 shortcut: a control that needs two taps to reach is a control a player mid-game

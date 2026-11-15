@@ -20,6 +20,7 @@
 use std::fmt::Write as _;
 
 use crate::card::{deck, Card, Rank};
+use crate::solver::Verdict;
 
 /// Key the game is saved under.
 ///
@@ -511,6 +512,10 @@ pub struct Game {
     /// False until the player has done something, so an untouched first visit
     /// writes nothing.
     started: bool,
+    /// True while the finish should not run by itself, because the player took
+    /// a card back out of it. The deal is then theirs to play by hand, and the
+    /// Finish button is how it is set going again.
+    finish_held: bool,
     history: Vec<Snapshot>,
     selection: Option<Selection>,
 }
@@ -553,6 +558,7 @@ impl Game {
             redeals: 0,
             won: false,
             started: false,
+            finish_held: false,
             history: Vec::new(),
             selection: None,
         }
@@ -732,6 +738,17 @@ impl Game {
     pub fn redeals_left(&self) -> Option<u32> {
         self.redeal_limit()
             .map(|max| max.saturating_sub(self.redeals))
+    }
+
+    /// How many times the waste has been turned back over.
+    ///
+    /// The count is only part of a position when the deal limits it: with
+    /// unlimited passes, a board that has been turned over twice and the same
+    /// board turned over three times are the same place to play from, and a
+    /// search that told them apart would never finish.
+    #[must_use]
+    pub const fn redeals_used(&self) -> u32 {
+        self.redeals
     }
 
     /// The rules in one line, for the menu.
@@ -943,6 +960,13 @@ impl Game {
         };
         self.restore(snapshot);
         self.selection = None;
+        // Taking a card back out of a deal that was finishing itself is the
+        // player saying they want to play it by hand: it must not start
+        // finishing again underneath them, or the undo does nothing at all.
+        // The Finish button puts it back to work.
+        if self.can_autocomplete() {
+            self.finish_held = true;
+        }
         Report::quiet("Undid the last move.")
     }
 
@@ -956,10 +980,37 @@ impl Game {
             && self.tableau.iter().all(|column| column.up == 0)
     }
 
+    /// True when the deal should finish itself now: every card is uncovered,
+    /// and the player has not taken it back.
+    ///
+    /// The page asks this after every change, which is the whole of "the Finish
+    /// button happens by itself": there is no timer, no second start and no
+    /// button to press, and a deal that becomes a formality finishes wherever
+    /// the move that made it one came from.
+    #[must_use]
+    pub fn finishing(&self) -> bool {
+        self.can_autocomplete() && !self.finish_held
+    }
+
+    /// True when the finish has stopped and the player has to ask for it.
+    #[must_use]
+    pub const fn finish_held(&self) -> bool {
+        self.finish_held
+    }
+
+    /// Let the automatic finish run again, after the player stopped it.
+    pub fn resume_finish(&mut self) {
+        self.finish_held = false;
+    }
+
     /// Move one more card home, if the board is ready for it.
     ///
-    /// Returns `None` when there is nothing left for the automatic finish to
-    /// do; the page stops its timer then.
+    /// Returns `None` when there is nothing left to send home *just now*, and
+    /// the page stops until the deal changes again. That is not a verdict: every
+    /// card being face up does not mean every card is reachable, and a run
+    /// moved by hand can uncover the card that was in the way. So the finish
+    /// asks again after the next move instead of deciding it is over, and it
+    /// needs no switch of its own to do so.
     pub fn autocomplete_step(&mut self) -> Option<Report> {
         if !self.can_autocomplete() {
             return None;
@@ -1287,6 +1338,7 @@ impl Game {
             redeals,
             won,
             started,
+            finish_held: false,
             history: Vec::new(),
             selection: None,
         };
@@ -1296,7 +1348,10 @@ impl Game {
         Some(game)
     }
 
-    fn redeal_limit(&self) -> Option<u32> {
+    /// How many times the waste may be turned back over: `None` for a deal
+    /// with no limit, and zero for a Vegas stake, which allows one pass in all.
+    #[must_use]
+    pub fn redeal_limit(&self) -> Option<u32> {
         if self.scoring == Scoring::Vegas {
             Some(0)
         } else {
@@ -1602,6 +1657,24 @@ fn valid_foundation(cards: &[u16], deck: &[Card]) -> bool {
         let card = deck[id as usize];
         card.suit == suit && usize::from(card.rank.value()) == index + 1
     })
+}
+
+/// What the status line says when the deal has been checked for a way out.
+///
+/// Three answers, and they are not one answer with two excuses: "no way to win
+/// from here" is a claim the search has *proved*, while "not sure" is the
+/// search saying it did not get far enough. Telling a player the first when it
+/// means the second would cost them a game they could still have won, so the
+/// two never share a sentence.
+#[must_use]
+pub fn check_words(verdict: Verdict) -> String {
+    match verdict {
+        Verdict::Winnable => "Not stuck: there is a way to win from here.".to_owned(),
+        Verdict::Dead => "Stuck: no way to win from here. Undo, or start a new game.".to_owned(),
+        Verdict::Unclear => {
+            "Not sure: too many moves to try them all. The deal may still be winnable.".to_owned()
+        }
+    }
 }
 
 /// `m:ss`, or `h:mm:ss` once the clock passes an hour.
@@ -1916,6 +1989,84 @@ mod tests {
         assert!(game.won());
         assert!(game.result_words().contains("You won"));
         assert!(game.autocomplete_step().is_none());
+    }
+
+    /// A board with every card but the four kings home, and the kings on their
+    /// own columns: the finish is the whole of what is left.
+    fn a_ready_board() -> Game {
+        let mut game = empty_game(Scoring::Standard);
+        for (foundation, suit) in Suit::ALL.into_iter().enumerate() {
+            for rank in Rank::ALL {
+                if rank != Rank::King {
+                    game.foundations[foundation].push(id(&game, rank, suit));
+                }
+            }
+            put_column(&mut game, foundation, &[(Rank::King, suit)], 0);
+        }
+        game
+    }
+
+    #[test]
+    fn a_board_every_card_of_which_is_uncovered_finishes_itself() {
+        let game = a_ready_board();
+        assert!(game.can_autocomplete());
+        assert!(
+            game.finishing(),
+            "the finish has to want to run without being asked for"
+        );
+    }
+
+    #[test]
+    fn taking_a_card_back_out_of_the_finish_stops_it() {
+        let mut game = a_ready_board();
+        assert!(game.finishing());
+        let _ = game.autocomplete_step();
+        assert!(!game.won());
+        let _ = game.undo();
+        // The board is ready again, and that is exactly the problem: a finish
+        // that ignored the undo would put the card straight back, for ever.
+        assert!(game.can_autocomplete());
+        assert!(!game.finishing());
+        assert!(game.finish_held());
+        game.resume_finish();
+        assert!(game.finishing());
+    }
+
+    #[test]
+    fn a_finish_with_nothing_to_send_home_does_nothing_at_all() {
+        // Two cards that cannot go home and cannot be moved: every card is
+        // uncovered, so the board *looks* like a formality and is not one. The
+        // step must do nothing, and must not spend the player's deal by
+        // declaring it over: a card uncovered by hand can make the next one
+        // reachable.
+        let mut game = empty_game(Scoring::Standard);
+        put_column(
+            &mut game,
+            0,
+            &[(Rank::Six, Suit::Hearts), (Rank::Five, Suit::Spades)],
+            0,
+        );
+        assert!(game.can_autocomplete());
+        assert!(game.finishing());
+        assert!(game.autocomplete_step().is_none());
+        assert!(!game.won());
+        assert_eq!(game.moves(), 0, "a step that moves nothing is not a move");
+        assert!(!game.finish_held(), "the deal is the player's, not held");
+    }
+
+    #[test]
+    fn a_check_says_which_of_the_three_answers_it_has() {
+        let winnable = check_words(Verdict::Winnable);
+        let stuck = check_words(Verdict::Dead);
+        let unsure = check_words(Verdict::Unclear);
+        assert!(winnable.starts_with("Not stuck"));
+        assert!(stuck.starts_with("Stuck"));
+        assert!(unsure.starts_with("Not sure"));
+        // The three must not be able to be mistaken for one another: a proved
+        // dead end and a search that gave up are different answers.
+        for (one, other) in [(&winnable, &stuck), (&winnable, &unsure), (&stuck, &unsure)] {
+            assert_ne!(one, other);
+        }
     }
 
     #[test]
