@@ -67,9 +67,12 @@
   <label for="menu" class="menu-button"><span>Menu</span></label>
 </div>
 
-<!-- What just happened, in words, for anyone who is not watching the board.
-     Empty until there is something to say: a live region that ships with text
-     in it announces that text on load, which is noise. -->
+<!-- The one line the game may need to speak. It stays empty, and takes no
+     room, unless a tap was refused, a hint was asked for, or a stuck check has
+     an answer: a move is the board's to tell, and narrating what the player
+     just watched themselves do is a line of text under the table where the
+     cards want to be. Empty on load too, because a live region that ships with
+     text in it announces that text when the page opens. -->
 <p id="status" role="status" aria-live="polite"></p>
 
 <!-- The sheet holds everything that is not part of playing: the difficulty and

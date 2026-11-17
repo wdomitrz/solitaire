@@ -15,30 +15,12 @@ use crate::board::{Place, Scene};
 use crate::board_ui::{BoardUi, Intent};
 use crate::card::deck;
 use crate::game::{
-    check_words, Difficulty, Game, Hint, Options, Pile, Report, Scoring, OPTIONS_KEY, STORAGE_KEY,
+    stuck_words, Difficulty, Game, Hint, Options, Pile, Scoring, Words, OPTIONS_KEY, STORAGE_KEY,
 };
 use crate::shell::{fresh_seed, Inspect, Rules};
-use crate::solver::{Solver, Verdict};
 
 /// How long the automatic finish waits between cards, so it can be watched.
 const FINISH_MS: i32 = 140;
-
-/// How many positions one slice of a stuck check examines.
-///
-/// A slice is measured in positions rather than milliseconds because the search
-/// is the same work whatever the device, so the page stays inside a frame's
-/// worth of work on a phone and a desktop both. Measured on this box the walk
-/// examines about 1.7 million positions a second, so a slice is some ten
-/// milliseconds of work: the board keeps moving, and a check is done in about a
-/// second because the page takes a slice a frame.
-const CHECK_SLICE: u64 = 18_000;
-
-/// How many positions a check may examine in all before it says it is not sure.
-///
-/// A hundred slices, so the longest a player waits is under two seconds. That
-/// is the whole of the budget: it is a question about patience, not about
-/// cards, and it is spent on the deals that need it rather than on every deal.
-const CHECK_BUDGET: u64 = 1_200_000;
 
 /// Start the app.
 ///
@@ -63,9 +45,11 @@ struct Klondike {
     game: Game,
     options: Options,
     hint: Option<Hint>,
-    /// The stuck check in progress, if the player asked for one.
-    check: Option<Solver>,
-    /// What the game last said, waiting to be shown.
+    /// What the page has to say about the last action, waiting to be shown.
+    ///
+    /// `Some("")` is not the same as `None`: it is the instruction to clear the
+    /// line, which is how the sentence from an old tap stops standing under a
+    /// board it is no longer about.
     words: Option<String>,
 }
 
@@ -75,7 +59,6 @@ impl Default for Klondike {
             game: Game::new(Options::default().difficulty, Options::default().scoring, 0),
             options: Options::default(),
             hint: None,
-            check: None,
             words: None,
         }
     }
@@ -88,20 +71,18 @@ impl Klondike {
     }
 
     /// Answer one gesture with the game's rules.
-    fn answer(&mut self, intent: Intent) -> Report {
+    fn answer(&mut self, intent: Intent) -> Words {
         match intent {
             Intent::Tap { place, index } => self.tap(place, index),
             Intent::DoubleTap { place, index } => self.double_tap(place, index),
             Intent::Drop { from, index, to } => self.drop(from, index, to),
             Intent::Back => self.game.clear_selection(),
-            Intent::Cancelled => Report::quiet(""),
+            Intent::Cancelled => None,
         }
     }
 
-    fn tap(&mut self, place: Place, index: Option<usize>) -> Report {
-        let Some(pile) = Self::pile(place) else {
-            return Report::quiet("");
-        };
+    fn tap(&mut self, place: Place, index: Option<usize>) -> Words {
+        let pile = Self::pile(place)?;
         if pile == Pile::Stock {
             return self.game.draw();
         }
@@ -113,20 +94,20 @@ impl Klondike {
                 // held, the tap is a request to drop it on this pile, which the
                 // game answers for itself.
                 if self.game.selection().is_none() && self.game.is_face_down(pile, index) {
-                    return Report::quiet("");
+                    return None;
                 }
                 self.game.tap(pile, index)
             }
             // An empty place: a press on it is a destination for whatever is in
             // hand, and nothing more.
             None if self.game.selection().is_some() => self.game.drop(pile),
-            None => Report::quiet(""),
+            None => None,
         }
     }
 
-    fn double_tap(&mut self, place: Place, index: Option<usize>) -> Report {
+    fn double_tap(&mut self, place: Place, index: Option<usize>) -> Words {
         let (Some(pile), Some(index)) = (Self::pile(place), index) else {
-            return Report::quiet("");
+            return None;
         };
         self.game.double_tap(pile, index)
     }
@@ -138,9 +119,9 @@ impl Klondike {
     /// this run move" and "does this pile take it" — and the game answers each
     /// with the rule a tap uses, so a drag and a tap can never disagree about
     /// what is legal.
-    fn drop(&mut self, from: Place, index: usize, to: Place) -> Report {
+    fn drop(&mut self, from: Place, index: usize, to: Place) -> Words {
         let (Some(from), Some(to)) = (Self::pile(from), Self::pile(to)) else {
-            return Report::quiet("");
+            return None;
         };
         self.game.select(from, index);
         self.game.drop(to)
@@ -156,15 +137,16 @@ impl Klondike {
         if !self.game.finishing() {
             return None;
         }
-        let Some(report) = self.game.autocomplete_step() else {
+        if !self.game.autocomplete_step() {
             // Nothing can go home just now — every card is up, and a run still
-            // has to be moved by hand before the next one can. Say nothing: the
-            // player's own move is the sentence that belongs on screen, and the
-            // finish asks again after their next one. Nothing is held, so it
+            // has to be moved by hand before the next one can. The finish asks
+            // again after the player's next move, and nothing is held, so it
             // takes over the moment a card is reachable again.
             return None;
-        };
-        self.show(report);
+        }
+        // A card went home by itself, so any sentence on the line is about a
+        // board that has moved on: clear it, the same as a move the player made.
+        self.show(None);
         if self.game.won() {
             None
         } else {
@@ -183,8 +165,8 @@ impl Rules for Klondike {
     }
 
     fn act(&mut self, intent: Intent) {
-        let report = self.answer(intent);
-        self.show(report);
+        let words = self.answer(intent);
+        self.show(words);
     }
 
     fn lift(&self, place: Place, index: usize) -> usize {
@@ -210,9 +192,6 @@ impl Rules for Klondike {
 
     fn clear_hint(&mut self) {
         self.hint = None;
-        // A check answers a question about one position, so the moment the
-        // board moves the answer is about a deal that no longer exists.
-        self.check = None;
     }
 
     fn won(&self) -> bool {
@@ -228,8 +207,8 @@ impl Rules for Klondike {
     }
 
     fn undo(&mut self) {
-        let report = self.game.undo();
-        self.show(report);
+        let words = self.game.undo();
+        self.show(words);
     }
 
     fn started(&self) -> bool {
@@ -283,29 +262,11 @@ impl Rules for Klondike {
         Some("Stuck?")
     }
 
-    fn inspect_enabled(&self) -> bool {
-        self.check.is_none()
-    }
-
+    /// The question is about the board on screen, so it is answered in one
+    /// go: there is no search to slice up, and `Inspect::Busy` — the page
+    /// coming back for another frame — is a thing this game never needs.
     fn inspect(&mut self) -> Inspect {
-        if self.check.is_none() {
-            self.check = Solver::new(&self.game, CHECK_BUDGET);
-            if self.check.is_none() {
-                // A board the search cannot read is one it cannot answer for.
-                return Inspect::Done(Some(check_words(Verdict::Unclear)));
-            }
-        }
-        let verdict = self
-            .check
-            .as_mut()
-            .and_then(|check| check.step(CHECK_SLICE));
-        match verdict {
-            None => Inspect::Busy,
-            Some(verdict) => {
-                self.check = None;
-                Inspect::Done(Some(check_words(verdict)))
-            }
-        }
+        Inspect::Done(Some(stuck_words(self.game.stuck())))
     }
 
     fn take_words(&mut self) -> Option<String> {
@@ -372,10 +333,12 @@ impl Rules for Klondike {
 
     fn new_game(&mut self) {
         self.game = Game::dealt(self.options.difficulty, self.options.scoring, fresh_seed());
+        self.forget_words();
     }
 
     fn restart(&mut self) {
         self.game = self.game.restart();
+        self.forget_words();
     }
 }
 
@@ -421,11 +384,23 @@ impl Klondike {
         );
     }
 
-    /// Say what the game says, then let the shell know the board moved.
-    /// Keep whatever the game said, for the shell to put under the board.
-    fn show(&mut self, report: Report) {
-        if !report.words.is_empty() {
-            self.words = Some(report.words);
-        }
+    /// Clear the line when the board under it was thrown away: a sentence about
+    /// a deal that no longer exists is worse than nothing at all.
+    fn forget_words(&mut self) {
+        self.words = Some(String::new());
+    }
+
+    /// Keep whatever this action said, for the shell to put under the board.
+    ///
+    /// Always something: an action that says nothing clears the line, so a
+    /// hint from three moves ago cannot sit under a board it is not about. A
+    /// won deal is the exception — the victory panel is the whole message, and
+    /// whatever the line held is hidden behind it and cleared by the next deal.
+    fn show(&mut self, words: Words) {
+        self.words = if self.game.won() {
+            None
+        } else {
+            Some(words.unwrap_or_default())
+        };
     }
 }

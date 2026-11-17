@@ -22,11 +22,9 @@ pub mod game;
 pub mod scene;
 #[cfg(target_arch = "wasm32")]
 pub mod shell;
-pub mod solver;
 
 #[cfg(target_arch = "wasm32")]
 pub mod ui;
 
 pub use card::{Card, Rank, Suit};
-pub use game::{Difficulty, Game, Options, Pile, Report, Scoring, Selection, HISTORY_LIMIT};
-pub use solver::{Solver, Verdict};
+pub use game::{Difficulty, Game, Options, Pile, Scoring, Selection, Stuck, Words, HISTORY_LIMIT};

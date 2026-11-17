@@ -21,11 +21,11 @@ shell and `cargo build` writes the publishable site into `dist/`.
   deal is a formality, so it plays out on its own and ends at the victory
   screen. Undo still works, and taking a card back out of it stops the finish
   and puts a **Finish** button in the row so you can set it going again.
-- **Stuck?** asks whether the deal can still be won from where it stands, and
-  answers one of three things: there is a way to win from here, every move has
-  been tried and none of them leads to one, or the deal is too tangled to say
-  for certain. It is a search, not a guess — so "stuck" means proved, and a deal
-  that only has moves leading back to where it came from is genuinely stuck.
+- **Stuck?** asks whether you have run out of moves, and answers at once. A move
+  that turns a card over, sends one home, empties a column, plays the waste or
+  turns the stock changes the deal; a card moved off a king and back onto it does
+  not. When nothing but the second kind is left, the deal is stuck; when it is
+  not, **Hint** points at the move still worth making.
 - The menu holds the two choices that define the deal, and both apply to the
   *next* one so that changing your mind never discards a game in progress:
 
@@ -74,7 +74,6 @@ tree, so cargo would otherwise skip the second build and copy nothing.
 
     src/card.rs            the deck, the printed face and the stored code
     src/game.rs            the rules, the score, the undo history, the words
-    src/solver.rs          whether the deal can still be won, and the walk that says so
     src/ui.rs              the browser layer: the only file that touches the DOM
     src/ui.html            the static shell
     src/style.css          the styles, including the card format

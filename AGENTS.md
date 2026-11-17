@@ -9,15 +9,14 @@ applies here. What follows is what is specific to this game.
 - `src/card.rs` — the deck: `Rank`, `Suit`, `Card`, the two-character storage
   code, and the printed short form. No `web-sys`, so `cargo test` runs it.
 - `src/game.rs` — Klondike: the deal, the move grammar, the score, the undo
-  history, the hint heuristic, the save format, and **every word the page
-  shows**. Also `web-sys`-free.
+  history, the hint heuristic, the stuck answer (which is the hint read the
+  other way round), the save format, and **every word the page
+  shows** — which, since the page stopped narrating moves, is a refusal or an
+  answer to a question and almost nothing else. Also `web-sys`-free.
 - `src/scene.rs` — the game as the board draws it: the piles, how each fans,
   how many cells each occupies, where the keyboard starts. Compiled for the
   host too, so `cargo test` checks the board's *arrangement* rather than only
   its arithmetic.
-- `src/solver.rs` — whether the deal can still be won: the positions it can
-  reach, and the walk that visits them. No `web-sys` either, so the verdicts are
-  tested natively.
 - `src/ui.rs` — the browser half: a `Rules` implementation and nothing else.
   The board itself is [`src/board_ui.rs`], the page around it is
   [`src/shell.rs`], and both are shared with the other solitaire.
@@ -175,63 +174,93 @@ A board with every card up and nothing that can go home is *not* stopped, and
 deliberately so. Every card being face up does not mean every card is reachable:
 a run moved by hand can uncover the one that was in the way, so the finish asking
 again after the next move is right and a flag saying "over" would be wrong. The
-step returns nothing, the page stops its timer, and the player's own move is what
-is on the status line — the finish takes over again the moment a card is
-reachable.
+step reports that it moved nothing, the page stops its timer, and the finish
+takes over again the moment a card is reachable.
 
-**"Stuck?" answers a question the hint cannot, and says which answer it has.**
-`src/solver.rs` searches the positions reachable from the current board for a
-won one. The three answers are kept apart on purpose:
+**A move says nothing: the page is not a log.** Every mutation used to narrate
+itself on the line under the table — "Moved the 5♠ to column 3.", "Turned 3
+cards from the stock.", "Picked up the 9♥.", "Put back.", "Undid the last move."
+— and the line was the third copy of news the player already had: they sent the
+card, they watched it land, and the header had counted the move. It also cost a
+row of a board that is laid out from the height it is given, and a line that is
+usually stale ("Picked up the 9♥" after the 9♥ is long since played) is worse
+than an empty one.
 
-- **Not stuck** — a winning line exists. The search reached a won position.
-- **Stuck** — every reachable position was visited and none of them wins.
-- **Not sure** — the budget ran out first.
+So a mutation returns `Words` (`Option<String>`) and says `None` unless the
+board cannot speak for itself. Two things can, and both stay:
 
-`Stuck` is a claim the search has *proved*, so it may only be said when the walk
-finished; `Not sure` is the search admitting it did not get far enough. Printing
-the first when it means the second would cost a player a game they could still
-have won, so the two never share a sentence (`check_words`).
+- **A refusal.** A tap that does nothing is indistinguishable from a control
+  that is broken, so "That card cannot go there.", "That card is face down.",
+  "Nowhere to send the eight of spades home." and "No passes left." are what the
+  line is for. They are rare by construction — they are only ever an error.
+- **An answer to a question.** Hint and Stuck? are buttons the player pressed
+  for a sentence, and the ring that marks both ends of a hinted move is a
+  picture: `aria-hidden`, and no use to a screen reader.
 
-Loops are the whole reason this is a search and not a move count. A deal whose
-only moves lead back to where they came from is dead, not "still exploring", and
-the transposition table is what distinguishes the two: every position reached is
-recorded by a hash of exactly the cards and counts in play, so a move back onto a
-board already seen is dropped instead of followed for ever. The count of redeals
-is part of that hash only when the deal limits it — with unlimited passes, a
-board turned over twice and the same board turned over three times are the same
-place to play from, and telling them apart is what would stop the walk from
-ever closing.
+The win is in neither group. The victory panel carries the result, a sentence
+underneath it is the same news twice, and the panel covers it anyway.
 
-Two moves are deliberately not generated, both because they are the same board
-under another name: a whole column onto an empty column, and a card onto an empty
-column that is not the first empty one. Every empty column is interchangeable, so
-collapsing them is what keeps the search from re-walking the same position under
-every numbering of the columns.
+A silent action still *writes* to the live region — with the empty string. It is
+how the sentence from an old tap stops standing under a board it is not about,
+and it is why `#status:empty` is `display: none`: the line takes no room and no
+gap until there is something to say, which measured out as 17px of table given
+back. The trade is that a message borrows a line back for as long as it is up:
+the table resizes by that line, and by no more.
 
-`Position` is a *second* copy of Klondike's rules, small and copyable because the
-walk copies a board tens of thousands of times. Two tests hold the copies
-together, and they are the reason the verdict can be trusted at all: one plays
-every move the search generates on a real `Game` and requires the boards to
-match, and the other enumerates every move the *game* allows and requires the
-search to offer it. The second is the one a "Stuck" verdict rests on — a search
-that silently skipped a move would call a winnable deal stuck.
+The shared `shell.rs` needed no change for any of this, which is the point of
+`Words` living in the game: `take_words` returning `None` says nothing, and
+`Some("")` clears. A game that narrates nothing is not a game the shell has to
+know about.
 
-The walk is depth first with its own stack, so it runs in slices between frames
-rather than freezing the board for its whole length: 18 000 positions a slice, a
-hard budget of 1 200 000, and the line under the board says what is happening
-instead of leaving a dead button. Measured in the browser, the walk examines
-about 1.7 million positions a second and the full budget takes 1.1s at 60fps;
-most answers arrive long before it.
+A screen reader loses the announcement a move used to make, and gets the board
+instead: every pile is named with its count and its top card
+(`Game::pile_label`), and the card that moved keeps the focus. A refusal is
+still spoken, which is the one place where silence would be a dead control.
 
-Measured against the 99 positions a random player actually gets stuck in, the
-answer is `Not stuck` or `Stuck` for 96 of them, and the slowest of those takes
-0.12s — because a game that has really run out of moves has a small graph to
-close. The rare deal the budget runs out on says so. From a *fresh* deal it is
-usually `Not sure`, which is the honest answer: a won position is fifty-odd moves
-away, and about half of Easy deals are proven winnable within the budget, which
-is not enough to justify waiting longer for the rest. The button is worth
-pressing when the deal feels stuck, which is exactly when the search can close
-the graph and answer.
+**"Stuck?" asks whether there is still a move, not whether the deal can be won.**
+It used to answer the second question: `src/solver.rs` walked every position
+reachable from the board, with a transposition table to stop a move back onto a
+board already seen and a 1.2-million-position budget, and said "there is a way
+to win from here", "no way to win from here" or "not sure — too many moves to
+try them all". All of that answered a question the player had not asked, and the
+answers were unsatisfying in both directions: from a fresh deal it was usually
+"not sure", and on the deal where a player actually presses the button it told
+them their game was unwinnable — information that ends a game rather than
+helping one continue.
+
+The question a player is asking is "have I run out of moves?", and it is about
+the board on screen. So the check is: **is there a legal move that changes the
+deal?** A card that goes home, a run that turns a face-down card over or empties
+a column, a waste card that can be played, a stock with cards left to turn — all
+change it. A queen moved off a king and back onto it does not, and a deal whose
+only legal moves are that kind is stuck (`Stuck::Dead`), with Undo the only thing
+left that does anything.
+
+Two consequences, both wanted:
+
+- **It is instant**, so the two-second budget, the 18 000-position slices and
+  the "Checking the deal…" line all go with it, and so does `src/solver.rs`
+  (1 229 lines) and its second copy of Klondike's rules. `Inspect::Done` is
+  returned in one go; `Inspect::Busy` still exists in `shell.rs` because the
+  shell is shared and another game may need it.
+- **It cannot disagree with the hint.** `Game::stuck` is `Game::hint` read the
+  other way round: the hint already decides what is worth pointing at (a move
+  that turns a card over, empties a column or uncovers a card that can go home
+  — see the hint decision above), so "not stuck" means exactly "Hint has
+  something to point at", and the answer says so. One criterion, no drift, and
+  no second copy of a rule that has to be kept in step.
+
+Two answers instead of three, because "not sure" was the search's problem rather
+than the player's: either there is a move worth making (`stuck_words`,
+`Stuck::Playing`) or there is not (`Stuck::Dead`).
+
+The honest gap is the stock cycle. A recycle with passes left counts as
+something to try, so a dead board that is still allowed to turn the waste over
+will answer "not stuck" — as often as it is asked, and the hint will point at
+the recycle just as often. That is deliberate: in draw-three a pass over the
+same cards does present new groupings, the two answers stay in step, and the
+alternative is guessing at a difference the game does not record. A board with
+nothing left to turn is the case this exists to catch, and it catches it.
 
 **Controls move to a side rail on a wide short screen.** The board is laid out
 from the *height* the page gives it, so every row of chrome above and below is a

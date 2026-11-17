@@ -478,16 +478,22 @@ h1 {
   outline-offset: 2px;
 }
 
-/* The live line. It reserves one line of height, so a move that says nothing
-   does not lift the table by a line, and a move that says something cannot
-   push the tools off a short screen. */
+/* The live line. It is empty unless the game has something the board cannot
+   say for itself — a refusal, a hint, the answer to a stuck check — so it takes
+   no room at all when it is empty: the row and its gap belong to the table.
+   A message borrows a line back for as long as it is there, which is the trade
+   this app makes; a permanently reserved line under a board that is laid out
+   from the height it is given is a line of cards given away for nothing. */
 #status {
-  min-height: 1.4em;
   margin: 0;
   padding: 0 .25rem;
   color: var(--muted);
   font-size: .76rem;
   text-align: center;
+}
+
+#status:empty {
+  display: none;
 }
 
 #error {
