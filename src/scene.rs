@@ -46,13 +46,22 @@ pub fn scene(game: &Game, hint: Option<&Hint>) -> Scene {
     }
     let mut scene = Scene::new(slots, TOP_CELLS);
     scene.held = game.selection().map(|held| (held.pile.place(), held.index));
+    // The ring goes on the pile to press, which is not a card: the stock for a
+    // turn, the waste for turning it back over. Ringing the stock for a recycle
+    // was a hint that pointed at the wrong pile — and with the words reduced to
+    // one, the picture is all the player has to go on.
     scene.hint = hint.and_then(|hint| match hint {
         Hint::Move {
             from, index, count, ..
         } => Some((from.place(), *index, *count)),
-        Hint::Draw | Hint::Recycle => Some((
+        Hint::Draw => Some((
             Pile::Stock.place(),
             game.pile_len(Pile::Stock).saturating_sub(1),
+            1,
+        )),
+        Hint::Recycle => Some((
+            Pile::Waste.place(),
+            game.pile_len(Pile::Waste).saturating_sub(1),
             1,
         )),
         Hint::None => None,

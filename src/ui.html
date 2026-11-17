@@ -126,7 +126,6 @@
      panel would otherwise beat the attribute and leave it on screen. -->
 <div id="won" hidden role="dialog" aria-modal="true" aria-labelledby="won-title">
   <div class="won-card">
-    <p class="won-kicker">Deal complete</p>
     <h2 id="won-title">You won</h2>
     <p id="won-detail"></p>
     <button id="won-new" type="button">New game</button>
@@ -135,7 +134,7 @@
 
 <p id="error" role="alert" hidden></p>
 
-<noscript>This solitaire needs JavaScript enabled. Turn it on and reload to play.</noscript>
+<noscript>Solitaire needs JavaScript on.</noscript>
 <!-- The one script in the document: it hands over to the generated bindings and
      does nothing else. No state, no rendering, no event handling — everything
      below the import is the failure message for the case where the app never
@@ -144,7 +143,7 @@
 import('./app.js').then(m => m.default()).catch(error => {
   const box = document.getElementById('error');
   box.hidden = false;
-  box.textContent = 'Solitaire could not start. Reload the page, or check your connection. ' + error;
+  box.textContent = 'Solitaire could not start. Reload. ' + error;
 });
 </script>
 </body>

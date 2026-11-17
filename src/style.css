@@ -664,15 +664,6 @@ h1 {
   box-shadow: 0 18px 50px rgb(0 0 0 / 45%);
 }
 
-.won-kicker {
-  margin: 0 0 .2rem;
-  color: var(--accent);
-  font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
 .won-card h2 {
   margin: 0 0 .5rem;
   font-size: 1.35rem;

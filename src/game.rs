@@ -121,13 +121,13 @@ impl Difficulty {
         }
     }
 
-    /// The rule in one phrase, for the menu.
+    /// The rule in a few words, for the menu.
     #[must_use]
-    pub const fn sentence(self) -> &'static str {
+    pub const fn note(self) -> &'static str {
         match self {
-            Self::Easy => "Turn one card at a time, with unlimited passes.",
-            Self::Medium => "Turn three cards at a time, with unlimited passes.",
-            Self::Hard => "Turn three cards at a time, with three passes.",
+            Self::Easy => "One at a time · unlimited passes",
+            Self::Medium => "Three at a time · unlimited passes",
+            Self::Hard => "Three at a time · three passes",
         }
     }
 }
@@ -174,17 +174,13 @@ impl Scoring {
         Self::ALL.into_iter().find(|style| style.slug() == slug)
     }
 
-    /// The style in one sentence, for the menu.
+    /// The style in a few words, for the menu.
     #[must_use]
-    pub const fn sentence(self) -> &'static str {
+    pub const fn note(self) -> &'static str {
         match self {
-            Self::Standard => {
-                "Points for cards played and turned. Moving a card off a foundation costs 15."
-            }
-            Self::Vegas => {
-                "A 52-coin stake and 5 coins for every card sent home. One pass through the stock."
-            }
-            Self::Off => "No score, no penalty. Just the game and the clock.",
+            Self::Standard => "Points for cards played and turned",
+            Self::Vegas => "52-coin stake · 5 a card · one pass",
+            Self::Off => "Game and clock · no points",
         }
     }
 }
@@ -237,23 +233,6 @@ impl Options {
             difficulty,
             scoring,
         })
-    }
-
-    /// The rule summary, e.g. `"Medium · three at a time · unlimited passes"`.
-    #[must_use]
-    pub fn summary(self) -> String {
-        let passes = match (self.scoring, self.difficulty.max_redeals()) {
-            (Scoring::Vegas, _) => "one pass".to_owned(),
-            (_, None) => "unlimited passes".to_owned(),
-            (_, Some(max)) => format!("{} passes", max + 1),
-        };
-        format!(
-            "{} · turn {} at a time · {} · {} scoring",
-            self.difficulty.label(),
-            self.difficulty.draw(),
-            passes,
-            self.scoring.label().to_lowercase()
-        )
     }
 }
 
@@ -487,6 +466,7 @@ pub struct Readout {
 }
 
 /// A game in progress.
+#[derive(Debug, Clone)]
 pub struct Game {
     /// The immutable deck; a pile holds indexes into it.
     ///
@@ -729,7 +709,11 @@ impl Game {
         !self.history.is_empty()
     }
 
-    /// The rules in one line, for the menu.
+    /// The deal's rules as one label, for the top of the menu.
+    ///
+    /// The header already says "Turn 3" and the two selects below say which
+    /// settings are chosen, so this line is the one thing neither of them says:
+    /// the passes left, and how the deal is scored.
     #[must_use]
     pub fn summary(&self) -> String {
         let passes = match self.redeal_limit() {
@@ -738,11 +722,10 @@ impl Game {
             Some(max) => format!("{} passes left", max.saturating_sub(self.redeals)),
         };
         format!(
-            "{} · turn {} at a time · {} · {} scoring",
+            "{} · {} · {}",
             self.difficulty.label(),
-            self.difficulty.draw(),
             passes,
-            self.scoring.label().to_lowercase()
+            self.scoring.label()
         )
     }
 
@@ -789,25 +772,29 @@ impl Game {
         !self.won && matches!(self.hint(), Hint::None)
     }
 
-    /// What the status line says when the deal is over.
+    /// The three facts of a finished deal, for the victory panel.
+    ///
+    /// The panel already says "You won" twice over — a kicker and a heading —
+    /// so the line under them is the numbers and nothing else: `"2:31 · 43
+    /// moves · 520 points"`.
     #[must_use]
     pub fn result_words(&self) -> String {
-        let score = match self.scoring {
-            Scoring::Standard => format!(" and {} points.", grouped(i64::from(self.score))),
-            Scoring::Vegas => format!(" and {}.", money(self.score)),
-            Scoring::Off => String::from("."),
-        };
         let moves = if self.moves == 1 {
             "1 move".to_owned()
         } else {
             format!("{} moves", self.moves)
         };
-        format!(
-            "You won in {} with {}{}",
-            clock_text(self.elapsed),
-            moves,
-            score
-        )
+        let mut out = format!("{} · {}", clock_text(self.elapsed), moves);
+        match self.scoring {
+            Scoring::Standard => {
+                let _ = write!(out, " · {} points", grouped(i64::from(self.score)));
+            }
+            Scoring::Vegas => {
+                let _ = write!(out, " · {}", money(self.score));
+            }
+            Scoring::Off => {}
+        }
+        out
     }
 
     /// Advance the clock. A won game stops.
@@ -853,7 +840,7 @@ impl Game {
             if self.can_pick(pile, index) {
                 return self.select(pile, index);
             }
-            return refuse("That card cannot go there.");
+            return refuse("Can't go there.");
         }
         self.select(pile, index)
     }
@@ -862,9 +849,9 @@ impl Game {
     pub fn select(&mut self, pile: Pile, index: usize) -> Words {
         if self.run_len_inner(pile, index).is_none() {
             if self.is_face_down(pile, index) && index < self.pile_len(pile) {
-                return refuse("That card is face down.");
+                return refuse("Face down.");
             }
-            return refuse("That card cannot move.");
+            return refuse("Can't move.");
         }
         self.selection = Some(Selection { pile, index });
         None
@@ -885,7 +872,7 @@ impl Game {
             return None;
         }
         if !self.can_move(selection, to) {
-            return refuse("That card cannot go there.");
+            return refuse("Can't go there.");
         }
         self.apply(selection, to)
     }
@@ -899,12 +886,12 @@ impl Game {
             return None;
         }
         let Some(card) = self.card_at(pile, index) else {
-            return refuse("That card cannot move.");
+            return refuse("Can't move.");
         };
         if self.run_len_inner(pile, index) != Some(1) {
             // Only a single card can go home; a run is a thing to move by hand.
             self.selection = None;
-            return refuse(format!("The {} is part of a run.", card.name()));
+            return refuse("Part of a run.");
         }
         if let Some(foundation) = self.foundation_for(card) {
             return self.apply(Selection { pile, index }, Pile::Foundation(foundation));
@@ -914,7 +901,7 @@ impl Game {
         // card that jumps to a column the player did not choose is worse than a
         // card that stays where they left it.
         self.selection = None;
-        refuse(format!("Nowhere to send the {} home.", card.name()))
+        refuse("Nowhere to go.")
     }
 
     /// Turn the stock, or turn the waste back over when the stock is empty.
@@ -1196,11 +1183,24 @@ impl Game {
     /// Only cards in the stock can be judged this way, and that is enough: a
     /// card deeper in the waste can only be reached by playing the cards above
     /// it, and the caller has already established that nothing can be played.
+    ///
+    /// [`Game::plays_anywhere`] is the same test the hint applies to the waste
+    /// top, on purpose: the promise this function makes is that some turn will
+    /// put a card in the waste that the hint will then point at, so the two
+    /// have to be one rule.
     fn turning_pays(&self) -> bool {
         let mut stock = self.stock.clone();
         let mut waste = self.waste.clone();
         let draw = self.difficulty.draw().max(1);
-        let mut recycles = self.redeal_limit().unwrap_or(u32::MAX);
+        // The passes the player still *has*, not the deal's whole allowance. A
+        // walk that spends passes already used finds a playable card in a pass
+        // the player cannot take, and that is the one way this answer can be
+        // wrong: it says "not stuck" and rings the stock on a board where the
+        // stock is the only thing left and it is spent.
+        let mut recycles = match self.redeal_limit() {
+            Some(max) => max.saturating_sub(self.redeals),
+            None => u32::MAX,
+        };
         loop {
             let start = stock.clone();
             while !stock.is_empty() {
@@ -1510,7 +1510,7 @@ impl Game {
     fn apply(&mut self, selection: Selection, to: Pile) -> Words {
         let Some(count) = self.run_len_inner(selection.pile, selection.index) else {
             self.selection = None;
-            return refuse("That card cannot move.");
+            return refuse("Can't move.");
         };
         if to == selection.pile {
             self.selection = None;
@@ -1520,13 +1520,13 @@ impl Game {
             || to == Pile::Waste
             || (matches!(to, Pile::Foundation(_)) && count != 1)
         {
-            return refuse("That card cannot go there.");
+            return refuse("Can't go there.");
         }
         let Some(card) = self.card_at(selection.pile, selection.index) else {
-            return refuse("That card cannot move.");
+            return refuse("Can't move.");
         };
         if !self.accepts(to, card) {
-            return refuse("That card cannot go there.");
+            return refuse("Can't go there.");
         }
 
         self.push_history();
@@ -1842,7 +1842,7 @@ mod tests {
         assert_eq!(game.tap(Pile::Tableau(1), 1), None);
         assert_eq!(
             game.tap(Pile::Tableau(0), 0).as_deref(),
-            Some("That card cannot go there.")
+            Some("Can't go there.")
         );
 
         let mut ready = a_ready_board();
@@ -1851,7 +1851,9 @@ mod tests {
             assert_eq!(ready.tap(Pile::Foundation(column), 0), None);
         }
         assert!(ready.won());
-        assert!(ready.result_words().starts_with("You won"));
+        // Four kings home by the test's own taps: the panel gets the numbers,
+        // the heading above them says "You won".
+        assert_eq!(ready.result_words(), "0:00 · 4 moves · 40 points");
     }
 
     #[test]
@@ -2019,7 +2021,7 @@ mod tests {
             assert!(game.autocomplete_step());
         }
         assert!(game.won());
-        assert!(game.result_words().contains("You won"));
+        assert!(game.result_words().contains("moves"));
         assert!(!game.autocomplete_step());
     }
 
@@ -2275,6 +2277,116 @@ mod tests {
         assert_eq!(game.hint(), Hint::None);
     }
 
+    /// The stock is named only when a turn the player can actually take brings
+    /// a card that plays — and the passes already spent do not count.
+    ///
+    /// This is the one way the answer can be wrong, and it was: the walk used
+    /// the deal's whole allowance instead of what was left, so on a Hard deal
+    /// with three passes gone it found a card two passes away that the player
+    /// could never reach. The board then said "not stuck" and rang the stock
+    /// for as long as the player kept pressing, on a deal that was dead.
+    ///
+    /// The test is the promise itself, on the board's own terms: whenever the
+    /// hint names the stock, a copy of the game that follows it — drawing and
+    /// recycling exactly as the player would — must arrive at a hinted move
+    /// before the stock is spent.
+    #[test]
+    fn a_stock_hint_always_leads_to_a_move() {
+        for difficulty in [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard] {
+            for seed in 0..60u64 {
+                let mut game = Game::dealt(difficulty, Scoring::Standard, seed);
+                let mut noise = seed.wrapping_mul(6_364_136_223_846_793_005);
+                for _ in 0..40 {
+                    if game.won() {
+                        break;
+                    }
+                    match game.hint() {
+                        Hint::Draw | Hint::Recycle => {
+                            assert!(
+                                draws_until_move(&game),
+                                "{difficulty:?} seed {seed}: the hint names the stock, but \
+                                 following it never reaches a move (passes {}/{})\n{}",
+                                game.redeals,
+                                game.redeal_limit()
+                                    .map_or_else(|| "unlimited".to_owned(), |max| max.to_string()),
+                                game.to_stored().unwrap_or_default()
+                            );
+                            game.draw();
+                        }
+                        _ => {
+                            // Wander, so the board is not only where the hint
+                            // would have led. Random taps need no legality
+                            // check: the game refuses the ones that are not
+                            // moves, and the board moves on either way.
+                            noise ^= noise << 13;
+                            noise ^= noise >> 7;
+                            noise ^= noise << 17;
+                            let pile = Pile::ALL[(noise % 12) as usize % Pile::ALL.len()];
+                            let len = game.pile_len(pile);
+                            let index = (noise >> 8) as usize % (len + 1);
+                            if (noise >> 20) % 6 == 0 {
+                                game.draw();
+                            } else if let Some(held) = game.selection() {
+                                let to = Pile::ALL[((noise >> 12) as usize) % Pile::ALL.len()];
+                                let _ = held;
+                                game.drop(to);
+                            } else {
+                                game.tap(pile, index);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// How many stock turns it takes to reach a hinted move, or `None` if the
+    /// stock is spent first. The moves are the game's own, on a copy of it.
+    fn draws_until_move(game: &Game) -> bool {
+        let mut probe = game.clone();
+        for _ in 0..60 {
+            match probe.hint() {
+                Hint::Move { .. } => return true,
+                Hint::Draw | Hint::Recycle => {
+                    let before = (probe.stock.clone(), probe.waste.clone());
+                    probe.draw();
+                    if (probe.stock.clone(), probe.waste.clone()) == before {
+                        return false;
+                    }
+                }
+                Hint::None => return false,
+            }
+        }
+        false
+    }
+
+    /// The ring goes on the pile to press: the stock for a turn, the waste for
+    /// turning it back over. Both are one-press piles whose card is the whole
+    /// answer, and a recycle that rang the stock pointed at the wrong one.
+    #[test]
+    fn a_hint_rings_the_pile_it_is_about() {
+        let mut game = empty_game(Scoring::Standard);
+        // A king left showing after one draw-three turn, with an empty column
+        // for it: the turn pays, and the turn is about the stock.
+        game.stock = vec![12, 3, 2];
+        assert_eq!(game.hint(), Hint::Draw);
+        assert_eq!(
+            crate::scene::scene(&game, Some(&Hint::Draw)).hint,
+            Some((Pile::Stock.place(), 2, 1))
+        );
+
+        // The waste, with an ace under a card nothing wants: the only way to
+        // it is turning the waste back over, and that is about the waste.
+        game.difficulty = Difficulty::Easy;
+        game.stock.clear();
+        game.waste = vec![0, 5];
+        assert_eq!(game.hint(), Hint::Recycle);
+        assert_eq!(
+            crate::scene::scene(&game, Some(&Hint::Recycle)).hint,
+            Some((Pile::Waste.place(), 1, 1))
+        );
+    }
+
     /// A stock cycle the turns cannot change is walked once and then
     /// recognised, which is what stops the search from going round for ever on
     /// a deal it cannot change.
@@ -2370,7 +2482,7 @@ mod tests {
         game.tableau[0].up = 0;
         assert_eq!(
             game.double_tap(Pile::Tableau(0), 0).as_deref(),
-            Some("Nowhere to send the two of hearts home."),
+            Some("Nowhere to go."),
             "a double tap that sends nothing nowhere says why it did nothing"
         );
         assert_eq!(game.pile_len(Pile::Tableau(0)), 1, "the card stayed put");
@@ -2404,7 +2516,7 @@ mod tests {
         game.tableau[0].up = 0;
         assert_eq!(
             game.double_tap(Pile::Tableau(0), 0).as_deref(),
-            Some("The two of hearts is part of a run.")
+            Some("Part of a run.")
         );
         assert_eq!(game.pile_len(Pile::Tableau(0)), 2);
     }

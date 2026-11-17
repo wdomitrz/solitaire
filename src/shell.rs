@@ -816,7 +816,7 @@ fn bind_menu<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<
             shell.rules.set_option(&name, &value);
             shell.save_options();
             shell.paint_menu();
-            shell.say("Set. It applies to the next deal.");
+            shell.say("Next deal.");
         });
         listen(&select, "change", closure.as_ref().unchecked_ref());
         closure.forget();

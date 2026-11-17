@@ -289,8 +289,8 @@ impl Rules for Klondike {
 
     fn option_note(&self, id: &str) -> String {
         match id {
-            "difficulty" => self.options.difficulty.sentence().to_owned(),
-            "scoring" => self.options.scoring.sentence().to_owned(),
+            "difficulty" => self.options.difficulty.note().to_owned(),
+            "scoring" => self.options.scoring.note().to_owned(),
             _ => String::new(),
         }
     }

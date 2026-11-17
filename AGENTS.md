@@ -199,15 +199,39 @@ So a mutation returns `Words` (`Option<String>`) and says `None` unless the
 board cannot speak for itself. Two things can, and both stay:
 
 - **A refusal.** A tap that does nothing is indistinguishable from a control
-  that is broken, so "That card cannot go there.", "That card is face down.",
-  "Nowhere to send the eight of spades home." and "No passes left." are what the
-  line is for. They are rare by construction — they are only ever an error.
+  that is broken, so "Can't go there.", "Face down.", "Part of a run.", "Nowhere
+  to go." and "No passes left." are what the line is for. They are rare by
+  construction — they are only ever an error.
 - **An answer to a question.** Hint and Stuck? are buttons the player pressed
-  for a sentence, and the ring that marks both ends of a hinted move is a
-  picture: `aria-hidden`, and no use to a screen reader.
+  for an answer, and what they get is a picture — the ring on both ends of a
+  hinted move, which is `aria-hidden` and no use to a screen reader — plus the
+  one word the picture cannot say.
 
 The win is in neither group. The victory panel carries the result, a sentence
 underneath it is the same news twice, and the panel covers it anyway.
+
+**What is left is a fragment, not a sentence.** Every string the page shows was
+rewritten once already — "Moved the 5♠" out, one word in — and that was not far
+enough: the refusals were still full sentences ("That card cannot go there."),
+the menu explained itself in prose, and the victory panel said "You won" twice
+over its own numbers. The rule now is the one the board already follows — say
+only what the picture cannot:
+
+| where | before | now |
+|---|---|---|
+| a refusal | "That card cannot go there." | "Can't go there." |
+| a hint or a check | "Not stuck: there is still a move worth making." | "Not stuck." |
+| the victory panel | "You won in 2:31 with 43 moves and 520 points." | "2:31 · 43 moves · 520 points" |
+| an option, under its select | "Turn three cards at a time, with three passes." | "Three at a time · three passes" |
+| the menu's heading line | "Medium · turn 3 at a time · unlimited passes · standard scoring" | "Medium · unlimited passes · Standard" |
+| a changed setting | "Set. It applies to the next deal." | "Next deal." |
+| the no-JavaScript notice | "This solitaire needs JavaScript enabled. Turn it on and reload to play." | "Solitaire needs JavaScript on." |
+
+Two rules keep it there. A label says what the reader gets, never how the app
+is made — and a fragment can only be read at a glance, so anything that needs a
+verb to be understood is a sign the page is explaining itself again. The victory
+panel is the sharpest case: its heading already says "You won", so the line
+under it is the three numbers and nothing else.
 
 A silent action still *writes* to the live region — with the empty string. It is
 how the sentence from an old tap stops standing under a board it is not about,
@@ -284,6 +308,23 @@ Before this, a saved board with ten unplayable cards in the stock and nothing
 else to do said "Turn over the next three cards." for ever and `Not stuck.`
 above it — the report that started this. It now says `Stuck.` from both
 buttons.
+
+**The walk spends the passes the player has, not the deal's allowance.** The
+first version of the walk used `redeal_limit()`, which is the *total* number of
+passes a deal allows, so on Hard with all three spent it kept walking: it found
+a playable card two passes away and promised it, ringing the stock on a board
+that could never reach it. That is the second report — "stuck saying not stuck
+again" — and it was found by asking the promise itself rather than by reading
+the code: `a_stock_hint_always_leads_to_a_move` wanders random boards across all
+three difficulties, and whenever the hint names the stock it follows that advice
+on a copy of the game and requires a hinted move before the stock is spent. It
+fails on the old line in under a tenth of a second, and it caught the same class
+of bug (`redeals` versus `redeal_limit`) that a hand-built test board had missed.
+
+The ring for a recycle is on the **waste**, not the stock. `Hint::Recycle` used
+to light the stock because both are "the stock half" of the board; with the
+words down to one, the ring is the whole instruction, and ringing the pile the
+player is not supposed to press is a worse lie than a long sentence.
 
 **Controls move to a side rail on a wide short screen.** The board is laid out
 from the *height* the page gives it, so every row of chrome above and below is a
