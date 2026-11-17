@@ -9,10 +9,10 @@ applies here. What follows is what is specific to this game.
 - `src/card.rs` — the deck: `Rank`, `Suit`, `Card`, the two-character storage
   code, and the printed short form. No `web-sys`, so `cargo test` runs it.
 - `src/game.rs` — Klondike: the deal, the move grammar, the score, the undo
-  history, the hint heuristic, the stuck answer (which is the hint read the
-  other way round), the save format, and **every word the page
-  shows** — which, since the page stopped narrating moves, is a refusal or an
-  answer to a question and almost nothing else. Also `web-sys`-free.
+  history, the hint heuristic (which is also the stuck answer), the save format,
+  and **every word the page shows** — which, since the page stopped narrating
+  moves, is a refusal or a single word and almost nothing else. Also
+  `web-sys`-free.
 - `src/scene.rs` — the game as the board draws it: the piles, how each fans,
   how many cells each occupies, where the keyboard starts. Compiled for the
   host too, so `cargo test` checks the board's *arrangement* rather than only
@@ -152,6 +152,15 @@ noticed:
   and a hint about the stock needs no second mark because the stock is both ends
   of it.
 
+**A hint says one word and draws a picture.** The ring marks both ends of the
+move, the board already carries the state, and the header already counts the
+moves — so the sentence that used to sit under the table ("Try the nine of
+hearts to column 3.") was the board read aloud to someone looking at it, and one
+more line in a place the player is not reading. What is left is the verdict,
+`Hint::words` → `Stuck.` or `Not stuck.`, and it is the *same two words* the
+Stuck? button gives, because it is the same answer (below). `Hint` carries no
+prose at all: a variant, and `Copy`.
+
 The mark is `pointer-events: none` and a sibling of the board, not a child: the
 destination must stay pressable underneath it, and the board's own stacking
 context is what keeps its hundreds of card `z-index`es out of the page.
@@ -231,10 +240,10 @@ helping one continue.
 The question a player is asking is "have I run out of moves?", and it is about
 the board on screen. So the check is: **is there a legal move that changes the
 deal?** A card that goes home, a run that turns a face-down card over or empties
-a column, a waste card that can be played, a stock with cards left to turn — all
-change it. A queen moved off a king and back onto it does not, and a deal whose
-only legal moves are that kind is stuck (`Stuck::Dead`), with Undo the only thing
-left that does anything.
+a column, a waste card that can be played, and a stock turn that exposes a
+playable card all change it. A queen moved off a king and back onto it does not,
+a stock walked from end to end and back does not, and a deal whose only legal
+moves are that kind is stuck, with Undo the only thing left that does anything.
 
 Two consequences, both wanted:
 
@@ -243,24 +252,38 @@ Two consequences, both wanted:
   (1 229 lines) and its second copy of Klondike's rules. `Inspect::Done` is
   returned in one go; `Inspect::Busy` still exists in `shell.rs` because the
   shell is shared and another game may need it.
-- **It cannot disagree with the hint.** `Game::stuck` is `Game::hint` read the
-  other way round: the hint already decides what is worth pointing at (a move
-  that turns a card over, empties a column or uncovers a card that can go home
-  — see the hint decision above), so "not stuck" means exactly "Hint has
-  something to point at", and the answer says so. One criterion, no drift, and
-  no second copy of a rule that has to be kept in step.
+- **It cannot disagree with the hint.** `Game::stuck` is
+  `matches!(self.hint(), Hint::None)` — literally the same call, not a second
+  copy of the rule — so "not stuck" means exactly "Hint has something to point
+  at". One criterion, no drift.
 
-Two answers instead of three, because "not sure" was the search's problem rather
-than the player's: either there is a move worth making (`stuck_words`,
-`Stuck::Playing`) or there is not (`Stuck::Dead`).
+**The stock is a move only if a turn pays.** A hint that says "turn over the
+next three cards" is a loop of exactly the kind the column-move fix was for,
+and it was the one the column fix missed: press Hint, turn the stock, press
+Hint, get the same instruction — on a deal where nothing in the stock can ever
+be played. So before the stock is suggested, `Game::turning_pays` walks it under
+the deal's own drawing rules and the deal's own pass limit, and asks whether any
+card it *exposes* — a waste top, never a card buried under one — goes to a
+foundation or onto a column the moment it is seen.
 
-The honest gap is the stock cycle. A recycle with passes left counts as
-something to try, so a dead board that is still allowed to turn the waste over
-will answer "not stuck" — as often as it is asked, and the hint will point at
-the recycle just as often. That is deliberate: in draw-three a pass over the
-same cards does present new groupings, the two answers stay in step, and the
-alternative is guessing at a difference the game does not record. A board with
-nothing left to turn is the case this exists to catch, and it catches it.
+The walk is exact rather than a fixed number of passes, and the reason is worth
+keeping: with nothing played between turns, a run through the stock leaves the
+waste as the stock exactly reversed, and turning the waste back over restores
+the stock to the position it started in. So one pass that exposes nothing
+playable is the whole answer, and the code proves it rather than assuming it by
+stopping when the stock comes back to where it started. It matters because in
+draw-three only the third card of each group is ever on show: two thirds of a
+stock may be unreachable no matter how many passes the deal allows, and a fixed
+number of passes would either miss a reachable card or promise an unreachable
+one.
+
+The same walk answers for the recycle (`Hint::Recycle`), which is why a waste
+that can only be turned over into itself says `Stuck.` too.
+
+Before this, a saved board with ten unplayable cards in the stock and nothing
+else to do said "Turn over the next three cards." for ever and `Not stuck.`
+above it — the report that started this. It now says `Stuck.` from both
+buttons.
 
 **Controls move to a side rail on a wide short screen.** The board is laid out
 from the *height* the page gives it, so every row of chrome above and below is a

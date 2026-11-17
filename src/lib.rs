@@ -27,4 +27,4 @@ pub mod shell;
 pub mod ui;
 
 pub use card::{Card, Rank, Suit};
-pub use game::{Difficulty, Game, Options, Pile, Scoring, Selection, Stuck, Words, HISTORY_LIMIT};
+pub use game::{Difficulty, Game, Options, Pile, Scoring, Selection, Words, HISTORY_LIMIT};

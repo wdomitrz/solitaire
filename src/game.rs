@@ -19,7 +19,7 @@
 //!   noise in the one place the cards want to be. A tap that *fails* is the
 //!   exception, because the board then shows nothing and silence would read as
 //!   a broken control.
-//! * **Every word is written here.** [`stuck_words`], [`Game::readout`],
+//! * **Every word is written here.** [`Hint::words`], [`Game::readout`],
 //!   [`Game::result_words`] and the refusals above are the only places that
 //!   turn state into prose; the page never composes a sentence of its own.
 
@@ -429,24 +429,15 @@ fn refuse(why: impl Into<String>) -> Words {
     Some(why.into())
 }
 
-/// What the Stuck? button found.
+/// What the game suggests, and the one word the page says about it.
 ///
-/// It is an answer about the board in front of the player and nothing more: a
-/// question about whether the deal can still be *won* is a different one, it
-/// needs a search of everything the deal could become, and it is not what a
-/// player pressing this button is asking.
+/// A hint is a *picture*: the board rings the cards to pick up and the place
+/// they land, which says "here, then there" without a sentence, and a sentence
+/// beside it ("Try the nine of hearts to column 3.") is the board read aloud to
+/// someone already looking at it. So there is no prose here at all — only the
+/// move, and a verdict the line under the board can say in one word
+/// ([`Hint::words`]): [`WORDS_STUCK`] or [`WORDS_NOT_STUCK`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stuck {
-    /// Some move changes the deal: a card can go home, a run can turn one over
-    /// or empty a column, the waste can be played, or the stock has cards to
-    /// turn.
-    Playing,
-    /// Every move still legal puts back what another one took out.
-    Dead,
-}
-
-/// A suggested move, or a suggestion about the stock.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hint {
     /// Move `count` cards beginning at `index` in `from` to `to`.
     Move {
@@ -458,35 +449,28 @@ pub enum Hint {
         to: Pile,
         /// How many cards the move carries.
         count: usize,
-        /// The sentence the status line shows.
-        words: String,
     },
-    /// The stock has cards to turn over.
-    Draw {
-        /// The sentence the status line shows.
-        words: String,
-    },
-    /// The waste can be turned back over.
-    Recycle {
-        /// The sentence the status line shows.
-        words: String,
-    },
-    /// There is nothing useful left to do.
-    None {
-        /// The sentence the status line shows.
-        words: String,
-    },
+    /// The stock has cards whose turn will expose something playable.
+    Draw,
+    /// The waste can be turned back over to expose something playable.
+    Recycle,
+    /// Nothing left that changes the deal.
+    None,
 }
 
+/// What the line under the board says when there is something worth doing.
+pub const WORDS_NOT_STUCK: &str = "Not stuck.";
+
+/// What it says when there is not.
+pub const WORDS_STUCK: &str = "Stuck.";
+
 impl Hint {
-    /// The sentence the status line shows.
+    /// The one word the line under the board shows.
     #[must_use]
-    pub fn words(&self) -> &str {
+    pub const fn words(&self) -> &'static str {
         match self {
-            Self::Move { words, .. }
-            | Self::Draw { words }
-            | Self::Recycle { words }
-            | Self::None { words } => words,
+            Self::None => WORDS_STUCK,
+            Self::Move { .. } | Self::Draw | Self::Recycle => WORDS_NOT_STUCK,
         }
     }
 }
@@ -790,26 +774,19 @@ impl Game {
     /// "Stuck" is a question about the board in front of the player: whether
     /// *any* legal move changes it, rather than a shuffle whose reverse is the
     /// next move. A card that goes home, a run that turns a face-down card over
-    /// or empties a column, a waste card that can be played, and the stock all
-    /// change the deal; a queen moved off a king and back onto it does not.
+    /// or empties a column, a playable card in the waste, and a stock turn that
+    /// can expose a playable card all change the deal; a queen moved off a king
+    /// and back onto it does not, and neither does walking the stock from one
+    /// end to the other and back.
     ///
-    /// The answer is [`Game::hint`]'s, read the other way round, and that is
-    /// the point of writing it this way: the hint already decides what is worth
-    /// pointing at, and asking it is what stops a "not stuck" from arriving
-    /// with nothing to suggest. So the two can never disagree, and "not stuck"
-    /// means precisely that Hint has something to point at.
-    ///
-    /// The shell asks this only about a deal still in play — the button is
-    /// disabled and the shortcut returns once the deal has been won — and a won
-    /// board is not a stuck one, so it answers `Playing` rather than filing a
-    /// victory under a dead deal.
+    /// The answer is [`Game::hint`], and the two say the same thing because
+    /// they *are* the same thing: one word ([`Hint::words`]) is what the line
+    /// under the board shows either way, so a "not stuck" can never arrive with
+    /// nothing to suggest — which is what a player who pressed both buttons
+    /// would otherwise catch in a second.
     #[must_use]
-    pub fn stuck(&self) -> Stuck {
-        if self.won || !matches!(self.hint(), Hint::None { .. }) {
-            Stuck::Playing
-        } else {
-            Stuck::Dead
-        }
+    pub fn stuck(&self) -> bool {
+        !self.won && matches!(self.hint(), Hint::None)
     }
 
     /// What the status line says when the deal is over.
@@ -1070,9 +1047,7 @@ impl Game {
     #[must_use]
     pub fn hint(&self) -> Hint {
         if self.won {
-            return Hint::None {
-                words: "The deal is over. Start a new one.".to_owned(),
-            };
+            return Hint::None;
         }
 
         let mut best: Option<(i32, Selection, Pile, usize)> = None;
@@ -1132,9 +1107,7 @@ impl Game {
         // it is worth more than the same card in a column.
         if let Some(index) = self.waste.len().checked_sub(1) {
             let Some(card) = self.card_at(Pile::Waste, index) else {
-                return Hint::None {
-                    words: "No moves left. Undo, or start a new game.".to_owned(),
-                };
+                return Hint::None;
             };
             if let Some(foundation) = self.foundation_for(card) {
                 consider(
@@ -1174,30 +1147,99 @@ impl Game {
                 index: selection.index,
                 to,
                 count,
-                words: self.move_sentence(selection, to, count),
             };
         }
+        // The stock is the last thing to try, and only if turning it can pay.
+        // A stock that is walked to the end and back without exposing anything
+        // playable is a loop, not a move, and pointing at it is how a hint
+        // became an instruction to turn the same cards until the player gave
+        // up — see `turning_pays`.
         if !self.stock.is_empty() {
-            return Hint::Draw {
-                words: if self.difficulty.draw() == 1 {
-                    "Turn over the next card.".to_owned()
-                } else {
-                    "Turn over the next three cards.".to_owned()
-                },
+            return if self.turning_pays() {
+                Hint::Draw
+            } else {
+                Hint::None
             };
         }
         if !self.waste.is_empty() && self.can_redeal() {
-            return Hint::Recycle {
-                words: "Turn the waste back over.".to_owned(),
+            return if self.turning_pays() {
+                Hint::Recycle
+            } else {
+                Hint::None
             };
         }
         // Nothing worth doing, and nothing left to turn over. Taking a card
         // back off a foundation is legal here and is not a suggestion: it is
         // how the player undoes their own progress, and the hint would then
         // send the same card home again.
-        Hint::None {
-            words: "No useful move left. Undo, or start a new game.".to_owned(),
+        Hint::None
+    }
+
+    /// Whether turning the stock over can expose a card that plays.
+    ///
+    /// This is the answer to "the hint just keeps saying turn more cards". A
+    /// turn that cannot produce a play ends exactly where it began — the whole
+    /// stock goes through the waste and back into the stock unchanged — so
+    /// pointing at the stock is a loop of the same kind as pointing at two
+    /// columns alternately: press Hint, do what it says, press Hint, and get
+    /// the same instruction back for ever.
+    ///
+    /// So the stock is walked here under the deal's own drawing rules and the
+    /// deal's own pass limit, and the answer is whether any card it *exposes*
+    /// — a waste top, never a card buried under one — can go to a foundation or
+    /// onto a column at the moment it is seen. The walk stops when the stock
+    /// comes back to a position it has already been in, which is the exact test
+    /// for "this cycle repeats": with draw-three and a stock that is a multiple
+    /// of three long, two thirds of the cards can never be reached at all, and
+    /// a fixed number of passes would either miss a card or lie about one.
+    ///
+    /// Only cards in the stock can be judged this way, and that is enough: a
+    /// card deeper in the waste can only be reached by playing the cards above
+    /// it, and the caller has already established that nothing can be played.
+    fn turning_pays(&self) -> bool {
+        let mut stock = self.stock.clone();
+        let mut waste = self.waste.clone();
+        let draw = self.difficulty.draw().max(1);
+        let mut recycles = self.redeal_limit().unwrap_or(u32::MAX);
+        loop {
+            let start = stock.clone();
+            while !stock.is_empty() {
+                let take = draw.min(stock.len());
+                for _ in 0..take {
+                    if let Some(card) = stock.pop() {
+                        waste.push(card);
+                    }
+                }
+                let Some(&top) = waste.last() else {
+                    return false;
+                };
+                if self.plays_anywhere(self.card(top)) {
+                    return true;
+                }
+            }
+            if waste.is_empty() || recycles == 0 {
+                return false;
+            }
+            recycles -= 1;
+            // The waste goes back into the stock the way the game turns it
+            // over, and a stock that comes back exactly as it started is a
+            // cycle with nothing new in it.
+            stock = waste.drain(..).rev().collect();
+            // The stock came back exactly as it was when this pass started, so
+            // this pass is the previous one again: nothing new can be exposed.
+            if stock == start {
+                return false;
+            }
         }
+    }
+
+    /// Whether this card has somewhere to go on the board as it stands.
+    ///
+    /// The same two destinations the hint considers: home, or a column. A card
+    /// that can do neither is one the stock turn spent itself to look at.
+    fn plays_anywhere(&self, card: Card) -> bool {
+        self.foundation_for(card).is_some()
+            || (0..COLUMNS).any(|column| self.accepts(Pile::Tableau(column), card))
     }
 
     /// What moving the run at `column`/`index` *to another column* is worth,
@@ -1592,27 +1634,6 @@ impl Game {
         self.won = snapshot.won;
     }
 
-    fn move_sentence(&self, selection: Selection, to: Pile, count: usize) -> String {
-        let Some(card) = self.card_at(selection.pile, selection.index) else {
-            return "Try another move.".to_owned();
-        };
-        let from = if selection.pile == Pile::Waste {
-            " from the waste".to_owned()
-        } else {
-            String::new()
-        };
-        if count == 1 {
-            format!("Try the {}{from} to {}.", card.name(), to.name())
-        } else {
-            format!(
-                "Try the {} and {} more{from} to {}.",
-                card.name(),
-                count - 1,
-                to.name()
-            )
-        }
-    }
-
     fn encode_cards(&self, cards: &[u16]) -> String {
         let mut out = String::with_capacity(cards.len() * 2);
         for &card in cards {
@@ -1651,24 +1672,6 @@ fn valid_foundation(cards: &[u16], deck: &[Card]) -> bool {
         let card = deck[id as usize];
         card.suit == suit && usize::from(card.rank.value()) == index + 1
     })
-}
-
-/// What the status line says when the deal has been looked over for a move.
-///
-/// Two answers, and they are both claims about the board rather than about
-/// what it might become: "there is a move worth making" (and the hint will
-/// point at one) or "there is nothing left but undoing".
-#[must_use]
-pub fn stuck_words(stuck: Stuck) -> String {
-    match stuck {
-        Stuck::Playing => {
-            "Not stuck: there is still a move worth making. Hint points at one.".to_owned()
-        }
-        Stuck::Dead => {
-            "Stuck: every move left only puts back what another took out. Undo, or start a new game."
-                .to_owned()
-        }
-    }
 }
 
 /// `m:ss`, or `h:mm:ss` once the clock passes an hour.
@@ -2083,16 +2086,25 @@ mod tests {
         assert!(!game.finish_held(), "the deal is the player's, not held");
     }
 
+    /// The line under the board says one word, and it is the same word whichever
+    /// button was pressed: the board is what points at the move.
     #[test]
-    fn a_check_says_which_of_the_two_answers_it_has() {
-        let playing = stuck_words(Stuck::Playing);
-        let dead = stuck_words(Stuck::Dead);
-        assert!(playing.starts_with("Not stuck"));
-        assert!(dead.starts_with("Stuck"));
-        assert_ne!(playing, dead);
-        // "Not stuck" has to say where to look next, because the player's own
-        // eyes have already failed to find the move.
-        assert!(playing.contains("Hint"));
+    fn a_check_says_stuck_or_not_stuck_and_nothing_else() {
+        assert_eq!(
+            Hint::Move {
+                from: Pile::Waste,
+                index: 0,
+                to: Pile::Tableau(0),
+                count: 1,
+            }
+            .words(),
+            "Not stuck."
+        );
+        assert_eq!(Hint::Draw.words(), "Not stuck.");
+        assert_eq!(Hint::Recycle.words(), "Not stuck.");
+        assert_eq!(Hint::None.words(), "Stuck.");
+        assert_eq!(WORDS_STUCK, "Stuck.");
+        assert_eq!(WORDS_NOT_STUCK, "Not stuck.");
     }
 
     /// The check answers a question about the board, not about a deal it could
@@ -2102,7 +2114,7 @@ mod tests {
     fn stuck_means_no_move_left_but_a_shuffle() {
         // A fresh deal has the stock to turn, which always changes something.
         let fresh = Game::dealt(Difficulty::Easy, Scoring::Standard, 11);
-        assert_eq!(fresh.stuck(), Stuck::Playing);
+        assert!(!fresh.stuck());
 
         // Two black cards on their own, with nothing to turn and nothing that
         // will take either of them: the only moves left are kings shuffling
@@ -2110,14 +2122,14 @@ mod tests {
         let mut dead = empty_game(Scoring::Standard);
         put_column(&mut dead, 0, &[(Rank::King, Suit::Spades)], 0);
         put_column(&mut dead, 1, &[(Rank::Queen, Suit::Spades)], 0);
-        assert_eq!(dead.stuck(), Stuck::Dead);
-        assert!(matches!(dead.hint(), Hint::None { .. }));
+        assert!(dead.stuck());
+        assert!(matches!(dead.hint(), Hint::None));
 
         // The same board with one card that can go home is not stuck.
         let mut playing = empty_game(Scoring::Standard);
         put_column(&mut playing, 0, &[(Rank::King, Suit::Spades)], 0);
         put_column(&mut playing, 1, &[(Rank::Ace, Suit::Hearts)], 0);
-        assert_eq!(playing.stuck(), Stuck::Playing);
+        assert!(!playing.stuck());
 
         // Nor is one where the only move is a run onto another column that
         // turns a card over: that is a change, even with the stock empty.
@@ -2129,7 +2141,7 @@ mod tests {
             1,
         );
         put_column(&mut revealing, 1, &[(Rank::Five, Suit::Clubs)], 0);
-        assert_eq!(revealing.stuck(), Stuck::Playing);
+        assert!(!revealing.stuck());
     }
 
     #[test]
@@ -2207,16 +2219,82 @@ mod tests {
         }
     }
 
+    /// The stock is suggested only when turning it can pay, and the whole
+    /// stock is walked to decide — not just the next card.
+    ///
+    /// The orientation matters and is the game's own: a draw pops cards off the
+    /// top of the stock, so in draw-three the *last* card of the vector is
+    /// drawn first and the third one is the card left showing. A king at the
+    /// bottom of a three-card stock is therefore on show after the first turn,
+    /// and a king in the middle of it is never on show at all.
     #[test]
-    fn the_hint_says_to_draw_when_no_move_is_left() {
+    fn the_hint_only_suggests_the_stock_when_a_turn_exposes_a_play() {
         let mut game = empty_game(Scoring::Standard);
-        game.stock = vec![0, 1];
-        assert!(matches!(game.hint(), Hint::Draw { .. }));
+        // Three cards, draw three, and the king is the one left showing. An
+        // empty column takes it, so turning the stock pays.
+        game.stock = vec![12, 3, 2];
+        assert_eq!(game.hint(), Hint::Draw);
+        assert!(!game.stuck());
+
+        // The same stock without the king: three cards nothing will take,
+        // walked round through the waste and back to where they started.
+        game.stock = vec![5, 3, 2];
+        assert_eq!(game.hint(), Hint::None);
+        assert!(game.stuck());
+
+        // Draw one reaches every card in the stock, so the same two cards are
+        // two different answers under the two deals.
+        game.difficulty = Difficulty::Easy;
+        game.stock = vec![5, 12];
+        assert_eq!(game.hint(), Hint::Draw);
+        game.difficulty = Difficulty::Medium;
+        game.stock = vec![12, 5];
+        assert_eq!(
+            game.hint(),
+            Hint::Draw,
+            "with two cards the first of them is left showing after one turn"
+        );
+        game.stock = vec![5, 12];
+        assert_eq!(
+            game.hint(),
+            Hint::None,
+            "the king is drawn first and buried under the six"
+        );
+
+        // The waste, likewise, only when turning it back over can expose a
+        // card that plays — the recycle is the same walk by another name.
+        game.difficulty = Difficulty::Easy;
         game.stock.clear();
-        game.waste = vec![2, 3];
-        assert!(matches!(game.hint(), Hint::Recycle { .. }));
+        // An ace under a card nothing wants: the top is dead, and the recycle
+        // is what turns it up.
+        game.waste = vec![0, 5];
+        assert_eq!(game.hint(), Hint::Recycle);
+        game.waste = vec![5, 3];
+        assert_eq!(game.hint(), Hint::None);
         game.waste.clear();
-        assert!(matches!(game.hint(), Hint::None { .. }));
+        assert_eq!(game.hint(), Hint::None);
+    }
+
+    /// A stock cycle the turns cannot change is walked once and then
+    /// recognised, which is what stops the search from going round for ever on
+    /// a deal it cannot change.
+    ///
+    /// The recycle is what makes this exact rather than a guess: with nothing
+    /// played between turns, a run through the stock leaves the waste as the
+    /// stock exactly reversed, and turning the waste back over restores the
+    /// stock to the position it started in. So a pass that exposes nothing
+    /// playable is the whole of the answer — more passes are the same pass,
+    /// whatever the deal allows — and in draw-three two thirds of the cards
+    /// may never be on show at all.
+    #[test]
+    fn a_stock_the_turns_cannot_change_is_not_worth_turning() {
+        let mut game = empty_game(Scoring::Standard);
+        game.stock = vec![2, 12, 3];
+        assert!(game.waste.is_empty());
+        // The king is in the stock and can never be shown: the card left
+        // showing is the first of the vector, every pass.
+        assert_eq!(game.hint(), Hint::None);
+        assert!(game.stuck());
     }
 
     #[test]
@@ -2421,18 +2499,18 @@ mod tests {
                             "the hinted move did not happen"
                         );
                     }
-                    Hint::Draw { .. } => {
+                    Hint::Draw => {
                         assert!(!game.stock.is_empty(), "a draw hint with an empty stock");
                         game.draw();
                     }
-                    Hint::Recycle { .. } => {
+                    Hint::Recycle => {
                         assert!(game.can_redeal(), "a recycle hint with no passes left");
                         game.draw();
                     }
-                    Hint::None { .. } => {
+                    Hint::None => {
                         assert!(
-                            game.stock.is_empty(),
-                            "nothing to do with cards left to turn"
+                            !game.turning_pays(),
+                            "a stock turn that pays was not suggested"
                         );
                         break;
                     }
@@ -2477,13 +2555,13 @@ mod tests {
                         );
                         seen.push(after);
                     }
-                    Hint::Draw { .. } | Hint::Recycle { .. } => {
+                    Hint::Draw | Hint::Recycle => {
                         // The stock is new information, so positions reached
                         // before it may legitimately be reached again.
                         seen.clear();
                         let _ = game.draw();
                     }
-                    Hint::None { .. } => break,
+                    Hint::None => break,
                 }
             }
         }

@@ -15,7 +15,8 @@ use crate::board::{Place, Scene};
 use crate::board_ui::{BoardUi, Intent};
 use crate::card::deck;
 use crate::game::{
-    stuck_words, Difficulty, Game, Hint, Options, Pile, Scoring, Words, OPTIONS_KEY, STORAGE_KEY,
+    Difficulty, Game, Hint, Options, Pile, Scoring, Words, OPTIONS_KEY, STORAGE_KEY,
+    WORDS_NOT_STUCK, WORDS_STUCK,
 };
 use crate::shell::{fresh_seed, Inspect, Rules};
 
@@ -185,9 +186,8 @@ impl Rules for Klondike {
             return None;
         }
         let hint = self.game.hint();
-        let words = hint.words().to_owned();
         self.hint = Some(hint);
-        Some(words)
+        Some(hint.words().to_owned())
     }
 
     fn clear_hint(&mut self) {
@@ -266,7 +266,10 @@ impl Rules for Klondike {
     /// go: there is no search to slice up, and `Inspect::Busy` — the page
     /// coming back for another frame — is a thing this game never needs.
     fn inspect(&mut self) -> Inspect {
-        Inspect::Done(Some(stuck_words(self.game.stuck())))
+        let stuck = self.game.stuck();
+        Inspect::Done(Some(
+            if stuck { WORDS_STUCK } else { WORDS_NOT_STUCK }.to_owned(),
+        ))
     }
 
     fn take_words(&mut self) -> Option<String> {

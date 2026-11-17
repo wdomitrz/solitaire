@@ -50,12 +50,12 @@ pub fn scene(game: &Game, hint: Option<&Hint>) -> Scene {
         Hint::Move {
             from, index, count, ..
         } => Some((from.place(), *index, *count)),
-        Hint::Draw { .. } | Hint::Recycle { .. } => Some((
+        Hint::Draw | Hint::Recycle => Some((
             Pile::Stock.place(),
             game.pile_len(Pile::Stock).saturating_sub(1),
             1,
         )),
-        Hint::None { .. } => None,
+        Hint::None => None,
     });
     scene
 }

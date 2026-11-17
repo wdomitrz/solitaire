@@ -22,10 +22,13 @@ shell and `cargo build` writes the publishable site into `dist/`.
   screen. Undo still works, and taking a card back out of it stops the finish
   and puts a **Finish** button in the row so you can set it going again.
 - **Stuck?** asks whether you have run out of moves, and answers at once. A move
-  that turns a card over, sends one home, empties a column, plays the waste or
-  turns the stock changes the deal; a card moved off a king and back onto it does
-  not. When nothing but the second kind is left, the deal is stuck; when it is
-  not, **Hint** points at the move still worth making.
+  that turns a card over, sends one home, empties a column, plays the waste, or
+  turns the stock to something playable changes the deal; a card moved off a king
+  and back onto it does not, and neither does turning the stock on a deal where
+  nothing in it can be played. When nothing but that is left, the deal is stuck.
+- Both buttons answer in one word — **Stuck.** or **Not stuck.** — and Hint
+  draws the move instead of describing it, ringing the card to pick up and the
+  place it goes.
 - The menu holds the two choices that define the deal, and both apply to the
   *next* one so that changing your mind never discards a game in progress:
 
