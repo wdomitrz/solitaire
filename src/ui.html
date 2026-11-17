@@ -134,7 +134,7 @@
 
 <p id="error" role="alert" hidden></p>
 
-<noscript>Solitaire needs JavaScript on.</noscript>
+<noscript>Solitaire needs JavaScript on</noscript>
 <!-- The one script in the document: it hands over to the generated bindings and
      does nothing else. No state, no rendering, no event handling — everything
      below the import is the failure message for the case where the app never
@@ -143,7 +143,7 @@
 import('./app.js').then(m => m.default()).catch(error => {
   const box = document.getElementById('error');
   box.hidden = false;
-  box.textContent = 'Solitaire could not start. Reload. ' + error;
+  box.textContent = 'Solitaire could not start — reload the page\n' + error;
 });
 </script>
 </body>

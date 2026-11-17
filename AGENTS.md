@@ -152,14 +152,32 @@ noticed:
   and a hint about the stock needs no second mark because the stock is both ends
   of it.
 
-**A hint says one word and draws a picture.** The ring marks both ends of the
-move, the board already carries the state, and the header already counts the
-moves — so the sentence that used to sit under the table ("Try the nine of
-hearts to column 3.") was the board read aloud to someone looking at it, and one
-more line in a place the player is not reading. What is left is the verdict,
-`Hint::words` → `Stuck.` or `Not stuck.`, and it is the *same two words* the
-Stuck? button gives, because it is the same answer (below). `Hint` carries no
-prose at all: a variant, and `Copy`.
+**A hint says nothing while it has something to show.** The ring marks both ends
+of the move, the board already carries the state, and the header already counts
+the moves — so the sentence that used to sit under the table ("Try the nine of
+hearts to column 3.") was the board read aloud to someone looking at it.
+
+The word `Not stuck` survived that rewrite and should not have: it is the answer
+to a *question*, and a player pressing Hint did not ask it — they asked for the
+move, and the two rings are the move. So `Hint::words()` is `None` whenever
+there is something to ring, and `Some("Stuck")` when there is not. Stuck? still
+says both answers, because both are the answer to the question that button asks.
+
+**A stock hint points with the keyboard, not a ring.** Two hints are one press
+on one pile — `Hint::Draw` (the stock) and `Hint::Recycle` (the stock again,
+once it is empty) — so there is no move to draw: the card the ring would circle
+is face down, or there is no card at all, and the player would be told "this
+one" about the wrong thing. The shell already asks `default_focus` for where the
+keyboard goes, and while a hint is up the game answers with the hint's own
+target: the run's first card for a move, the stock for either stock hint. So the
+hint *is* the focus — the pile gets the focus ring, Enter performs the hint, and
+`shell::hint` sets that focus after painting rather than leaving the keyboard
+wherever the last action put it.
+
+That is also why a hint is dropped by the next action (`Klondike::act` clears
+it): a ring or a focus left over from an earlier board points at cards that have
+moved on, and a stock hint would keep pulling the keyboard back to a pile the
+player has already pressed.
 
 The mark is `pointer-events: none` and a sibling of the board, not a child: the
 destination must stay pressable underneath it, and the board's own stacking
@@ -199,9 +217,9 @@ So a mutation returns `Words` (`Option<String>`) and says `None` unless the
 board cannot speak for itself. Two things can, and both stay:
 
 - **A refusal.** A tap that does nothing is indistinguishable from a control
-  that is broken, so "Can't go there.", "Face down.", "Part of a run.", "Nowhere
-  to go." and "No passes left." are what the line is for. They are rare by
-  construction — they are only ever an error.
+  that is broken, so "Can't go there", "Face down", "Part of a run", "Nowhere
+  to go" and "No passes left" are what the line is for. They are rare by
+  construction — they are only ever an error, and none of them is a sentence.
 - **An answer to a question.** Hint and Stuck? are buttons the player pressed
   for an answer, and what they get is a picture — the ring on both ends of a
   hinted move, which is `aria-hidden` and no use to a screen reader — plus the
@@ -219,8 +237,9 @@ only what the picture cannot:
 
 | where | before | now |
 |---|---|---|
-| a refusal | "That card cannot go there." | "Can't go there." |
-| a hint or a check | "Not stuck: there is still a move worth making." | "Not stuck." |
+| a refusal | "That card cannot go there." | "Can't go there" |
+| a hint | (nothing: the rings are the move) | |
+| a check | "Not stuck: there is still a move worth making." | "Not stuck" |
 | the victory panel | "You won in 2:31 with 43 moves and 520 points." | "2:31 · 43 moves · 520 points" |
 | an option, under its select | "Turn three cards at a time, with three passes." | "Three at a time · three passes" |
 | the menu's heading line | "Medium · turn 3 at a time · unlimited passes · standard scoring" | "Medium · unlimited passes · Standard" |
@@ -232,6 +251,12 @@ is made — and a fragment can only be read at a glance, so anything that needs 
 verb to be understood is a sign the page is explaining itself again. The victory
 panel is the sharpest case: its heading already says "You won", so the line
 under it is the three numbers and nothing else.
+
+**Not a full stop anywhere.** A one-word label is not a sentence: `Stuck`,
+`Not stuck`, `Can't go there`, `Face down` — the mark is the same editor's tic
+as the sentence it used to end, one character wide, and on a line whose whole
+content is two words it is pure ceremony. The exception is prose in a sentence,
+which is why the failure message keeps its full stop and its comma.
 
 A silent action still *writes* to the live region — with the empty string. It is
 how the sentence from an old tap stops standing under a board it is not about,
@@ -302,11 +327,11 @@ number of passes would either miss a reachable card or promise an unreachable
 one.
 
 The same walk answers for the recycle (`Hint::Recycle`), which is why a waste
-that can only be turned over into itself says `Stuck.` too.
+that can only be turned over into itself says `Stuck` too.
 
 Before this, a saved board with ten unplayable cards in the stock and nothing
 else to do said "Turn over the next three cards." for ever and `Not stuck.`
-above it — the report that started this. It now says `Stuck.` from both
+above it — the report that started this. It now says `Stuck` from both
 buttons.
 
 **The walk spends the passes the player has, not the deal's allowance.** The

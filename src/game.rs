@@ -408,14 +408,14 @@ fn refuse(why: impl Into<String>) -> Words {
     Some(why.into())
 }
 
-/// What the game suggests, and the one word the page says about it.
+/// What the game suggests.
 ///
 /// A hint is a *picture*: the board rings the cards to pick up and the place
 /// they land, which says "here, then there" without a sentence, and a sentence
 /// beside it ("Try the nine of hearts to column 3.") is the board read aloud to
-/// someone already looking at it. So there is no prose here at all — only the
-/// move, and a verdict the line under the board can say in one word
-/// ([`Hint::words`]): [`WORDS_STUCK`] or [`WORDS_NOT_STUCK`].
+/// someone already looking at it. So a hint that has something to show says
+/// nothing at all, and the one case with no picture to show — nothing to do —
+/// is the one case that speaks ([`Hint::words`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hint {
     /// Move `count` cards beginning at `index` in `from` to `to`.
@@ -437,19 +437,27 @@ pub enum Hint {
     None,
 }
 
-/// What the line under the board says when there is something worth doing.
-pub const WORDS_NOT_STUCK: &str = "Not stuck.";
+/// What the line says when there is nothing to do, from either button.
+pub const WORDS_STUCK: &str = "Stuck";
 
-/// What it says when there is not.
-pub const WORDS_STUCK: &str = "Stuck.";
+/// What the Stuck? button says when there is something left to play.
+///
+/// Only that button says it. "Not stuck" is the answer to a question the player
+/// asked; from *Hint* it is noise — a player pressing Hint wants the move, and
+/// the ring on the board is the move.
+pub const WORDS_NOT_STUCK: &str = "Not stuck";
 
 impl Hint {
-    /// The one word the line under the board shows.
+    /// What the line under the board has to say, or `None` for silence.
+    ///
+    /// Silence is the normal case: the board is showing the answer. The one
+    /// exception is a deal with nothing left in it, where there is no ring to
+    /// draw and the player would otherwise get nothing at all.
     #[must_use]
-    pub const fn words(&self) -> &'static str {
+    pub const fn words(&self) -> Option<&'static str> {
         match self {
-            Self::None => WORDS_STUCK,
-            Self::Move { .. } | Self::Draw | Self::Recycle => WORDS_NOT_STUCK,
+            Self::None => Some(WORDS_STUCK),
+            Self::Move { .. } | Self::Draw | Self::Recycle => None,
         }
     }
 }
@@ -840,7 +848,7 @@ impl Game {
             if self.can_pick(pile, index) {
                 return self.select(pile, index);
             }
-            return refuse("Can't go there.");
+            return refuse("Can't go there");
         }
         self.select(pile, index)
     }
@@ -849,9 +857,9 @@ impl Game {
     pub fn select(&mut self, pile: Pile, index: usize) -> Words {
         if self.run_len_inner(pile, index).is_none() {
             if self.is_face_down(pile, index) && index < self.pile_len(pile) {
-                return refuse("Face down.");
+                return refuse("Face down");
             }
-            return refuse("Can't move.");
+            return refuse("Can't move");
         }
         self.selection = Some(Selection { pile, index });
         None
@@ -872,7 +880,7 @@ impl Game {
             return None;
         }
         if !self.can_move(selection, to) {
-            return refuse("Can't go there.");
+            return refuse("Can't go there");
         }
         self.apply(selection, to)
     }
@@ -886,12 +894,12 @@ impl Game {
             return None;
         }
         let Some(card) = self.card_at(pile, index) else {
-            return refuse("Can't move.");
+            return refuse("Can't move");
         };
         if self.run_len_inner(pile, index) != Some(1) {
             // Only a single card can go home; a run is a thing to move by hand.
             self.selection = None;
-            return refuse("Part of a run.");
+            return refuse("Part of a run");
         }
         if let Some(foundation) = self.foundation_for(card) {
             return self.apply(Selection { pile, index }, Pile::Foundation(foundation));
@@ -901,7 +909,7 @@ impl Game {
         // card that jumps to a column the player did not choose is worse than a
         // card that stays where they left it.
         self.selection = None;
-        refuse("Nowhere to go.")
+        refuse("Nowhere to go")
     }
 
     /// Turn the stock, or turn the waste back over when the stock is empty.
@@ -1422,7 +1430,7 @@ impl Game {
         if !self.can_redeal() {
             // The one refusal the board cannot show: the waste is not empty and
             // the stock will not take it, and nothing on screen says why.
-            return refuse("No passes left.");
+            return refuse("No passes left");
         }
         self.push_history();
         self.selection = None;
@@ -1510,7 +1518,7 @@ impl Game {
     fn apply(&mut self, selection: Selection, to: Pile) -> Words {
         let Some(count) = self.run_len_inner(selection.pile, selection.index) else {
             self.selection = None;
-            return refuse("Can't move.");
+            return refuse("Can't move");
         };
         if to == selection.pile {
             self.selection = None;
@@ -1520,13 +1528,13 @@ impl Game {
             || to == Pile::Waste
             || (matches!(to, Pile::Foundation(_)) && count != 1)
         {
-            return refuse("Can't go there.");
+            return refuse("Can't go there");
         }
         let Some(card) = self.card_at(selection.pile, selection.index) else {
-            return refuse("Can't move.");
+            return refuse("Can't move");
         };
         if !self.accepts(to, card) {
-            return refuse("Can't go there.");
+            return refuse("Can't go there");
         }
 
         self.push_history();
@@ -1842,7 +1850,7 @@ mod tests {
         assert_eq!(game.tap(Pile::Tableau(1), 1), None);
         assert_eq!(
             game.tap(Pile::Tableau(0), 0).as_deref(),
-            Some("Can't go there.")
+            Some("Can't go there")
         );
 
         let mut ready = a_ready_board();
@@ -1917,7 +1925,7 @@ mod tests {
         }
         assert_eq!(game.redeals, 2);
         assert!(!game.can_redeal());
-        assert_eq!(game.draw().as_deref(), Some("No passes left."));
+        assert_eq!(game.draw().as_deref(), Some("No passes left"));
         assert!(game.stock.is_empty());
     }
 
@@ -1927,7 +1935,7 @@ mod tests {
         game.difficulty = Difficulty::Easy;
         game.stock = vec![0];
         game.draw();
-        assert_eq!(game.draw().as_deref(), Some("No passes left."));
+        assert_eq!(game.draw().as_deref(), Some("No passes left"));
         assert_eq!(game.score, -52);
     }
 
@@ -2088,10 +2096,11 @@ mod tests {
         assert!(!game.finish_held(), "the deal is the player's, not held");
     }
 
-    /// The line under the board says one word, and it is the same word whichever
-    /// button was pressed: the board is what points at the move.
+    /// A hint with something to show says nothing: the ring is the message.
+    /// Only a hint with nothing to show speaks, and it says one word, without
+    /// a stop.
     #[test]
-    fn a_check_says_stuck_or_not_stuck_and_nothing_else() {
+    fn a_hint_speaks_only_when_there_is_nothing_to_ring() {
         assert_eq!(
             Hint::Move {
                 from: Pile::Waste,
@@ -2100,13 +2109,19 @@ mod tests {
                 count: 1,
             }
             .words(),
-            "Not stuck."
+            None
         );
-        assert_eq!(Hint::Draw.words(), "Not stuck.");
-        assert_eq!(Hint::Recycle.words(), "Not stuck.");
-        assert_eq!(Hint::None.words(), "Stuck.");
-        assert_eq!(WORDS_STUCK, "Stuck.");
-        assert_eq!(WORDS_NOT_STUCK, "Not stuck.");
+        assert_eq!(Hint::Draw.words(), None);
+        assert_eq!(Hint::Recycle.words(), None);
+        assert_eq!(Hint::None.words(), Some("Stuck"));
+        assert_eq!(WORDS_STUCK, "Stuck");
+        assert_eq!(WORDS_NOT_STUCK, "Not stuck");
+        for word in [WORDS_STUCK, WORDS_NOT_STUCK] {
+            assert!(
+                !word.ends_with('.'),
+                "a fragment does not end in a stop: {word}"
+            );
+        }
     }
 
     /// The check answers a question about the board, not about a deal it could
@@ -2360,31 +2375,40 @@ mod tests {
         false
     }
 
-    /// The ring goes on the pile to press: the stock for a turn, the waste for
-    /// turning it back over. Both are one-press piles whose card is the whole
-    /// answer, and a recycle that rang the stock pointed at the wrong one.
+    /// Only a *move* is ringed. A stock hint is one press on one pile, and the
+    /// keyboard goes there instead: a ring around a face-down stack says "this
+    /// one" about cards that are not the thing to press, and the empty stock a
+    /// recycle needs has no card to circle at all.
     #[test]
-    fn a_hint_rings_the_pile_it_is_about() {
+    fn a_hint_rings_a_move_and_nothing_else() {
         let mut game = empty_game(Scoring::Standard);
-        // A king left showing after one draw-three turn, with an empty column
-        // for it: the turn pays, and the turn is about the stock.
-        game.stock = vec![12, 3, 2];
-        assert_eq!(game.hint(), Hint::Draw);
+        // A run that can go onto another column: the one hint that is a move,
+        // and therefore the one hint with a ring.
+        put_column(
+            &mut game,
+            0,
+            &[(Rank::Nine, Suit::Spades), (Rank::Eight, Suit::Hearts)],
+            1,
+        );
+        put_column(&mut game, 1, &[(Rank::Nine, Suit::Clubs)], 0);
+        let hint = game.hint();
+        assert!(matches!(hint, Hint::Move { .. }), "{hint:?}");
         assert_eq!(
-            crate::scene::scene(&game, Some(&Hint::Draw)).hint,
-            Some((Pile::Stock.place(), 2, 1))
+            crate::scene::scene(&game, Some(&hint)).hint,
+            Some((Pile::Tableau(0).place(), 1, 1))
         );
 
-        // The waste, with an ace under a card nothing wants: the only way to
-        // it is turning the waste back over, and that is about the waste.
+        // A stock whose turn pays: no ring, because the press is the answer.
+        let mut game = empty_game(Scoring::Standard);
+        game.stock = vec![12, 3, 2];
+        assert_eq!(game.hint(), Hint::Draw);
+        assert_eq!(crate::scene::scene(&game, Some(&Hint::Draw)).hint, None);
+
+        let mut game = empty_game(Scoring::Standard);
         game.difficulty = Difficulty::Easy;
-        game.stock.clear();
         game.waste = vec![0, 5];
         assert_eq!(game.hint(), Hint::Recycle);
-        assert_eq!(
-            crate::scene::scene(&game, Some(&Hint::Recycle)).hint,
-            Some((Pile::Waste.place(), 1, 1))
-        );
+        assert_eq!(crate::scene::scene(&game, Some(&Hint::Recycle)).hint, None);
     }
 
     /// A stock cycle the turns cannot change is walked once and then
@@ -2482,7 +2506,7 @@ mod tests {
         game.tableau[0].up = 0;
         assert_eq!(
             game.double_tap(Pile::Tableau(0), 0).as_deref(),
-            Some("Nowhere to go."),
+            Some("Nowhere to go"),
             "a double tap that sends nothing nowhere says why it did nothing"
         );
         assert_eq!(game.pile_len(Pile::Tableau(0)), 1, "the card stayed put");
@@ -2516,7 +2540,7 @@ mod tests {
         game.tableau[0].up = 0;
         assert_eq!(
             game.double_tap(Pile::Tableau(0), 0).as_deref(),
-            Some("Part of a run.")
+            Some("Part of a run")
         );
         assert_eq!(game.pile_len(Pile::Tableau(0)), 2);
     }
@@ -2662,8 +2686,7 @@ mod tests {
                         assert!(
                             !seen.contains(&after),
                             "seed {seed}: the hint walked back into a position it had \
-                             already reached — \"{}\", {from:?}#{index} to {to:?}",
-                            hint.words()
+                             already reached — {from:?}#{index} to {to:?}"
                         );
                         seen.push(after);
                     }

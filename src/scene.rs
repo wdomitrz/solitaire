@@ -46,25 +46,16 @@ pub fn scene(game: &Game, hint: Option<&Hint>) -> Scene {
     }
     let mut scene = Scene::new(slots, TOP_CELLS);
     scene.held = game.selection().map(|held| (held.pile.place(), held.index));
-    // The ring goes on the pile to press, which is not a card: the stock for a
-    // turn, the waste for turning it back over. Ringing the stock for a recycle
-    // was a hint that pointed at the wrong pile — and with the words reduced to
-    // one, the picture is all the player has to go on.
+    // Only a move is ringed. A hint about the stock is one press on one pile
+    // with nothing to choose between, and the keyboard goes there instead
+    // (`Klondike::default_focus`): a ring around a face-down stack says "this
+    // one" about a pile whose cards are not the thing to press, and an empty
+    // pile has no card to circle at all.
     scene.hint = hint.and_then(|hint| match hint {
         Hint::Move {
             from, index, count, ..
         } => Some((from.place(), *index, *count)),
-        Hint::Draw => Some((
-            Pile::Stock.place(),
-            game.pile_len(Pile::Stock).saturating_sub(1),
-            1,
-        )),
-        Hint::Recycle => Some((
-            Pile::Waste.place(),
-            game.pile_len(Pile::Waste).saturating_sub(1),
-            1,
-        )),
-        Hint::None => None,
+        Hint::Draw | Hint::Recycle | Hint::None => None,
     });
     scene
 }

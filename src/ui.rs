@@ -166,8 +166,36 @@ impl Rules for Klondike {
     }
 
     fn act(&mut self, intent: Intent) {
+        // A hint is about the board that was on screen when it was asked for,
+        // and any action has moved that board on: the ring would be pointing at
+        // cards that have gone, and — for a stock hint — keep pulling the
+        // keyboard onto a pile the player has already pressed.
+        self.hint = None;
         let words = self.answer(intent);
         self.show(words);
+    }
+
+    /// Where the keyboard goes — and while a hint is up, that is the hint.
+    ///
+    /// A hinted move is focused on the card to pick up, so Enter performs it;
+    /// a hinted stock turn is focused on the stock, because that one pile is
+    /// the whole of the move. The stock is also the pile a *recycle* needs,
+    /// and it is the empty one when it is needed: the board marks it `↻` and a
+    /// press there is what turns the waste back over. There is nothing to ring
+    /// in that case — the empty pile has no card to circle — so the focus is
+    /// the whole of what the hint can show.
+    fn default_focus(&self) -> (Place, Option<usize>) {
+        match self.hint {
+            Some(Hint::Move { from, index, .. }) => (from.place(), Some(index)),
+            Some(Hint::Draw | Hint::Recycle) => (
+                Pile::Stock.place(),
+                self.game
+                    .pile_len(Pile::Stock)
+                    .checked_sub(1)
+                    .filter(|_| self.hint.is_some_and(|hint| hint == Hint::Draw)),
+            ),
+            _ => crate::scene::default_focus(&self.game),
+        }
     }
 
     fn lift(&self, place: Place, index: usize) -> usize {
@@ -177,17 +205,20 @@ impl Rules for Klondike {
         }
     }
 
-    fn default_focus(&self) -> (Place, Option<usize>) {
-        crate::scene::default_focus(&self.game)
-    }
-
+    /// Ring the move and say nothing about it.
+    ///
+    /// The shell always has to return something here — `None` means "give the
+    /// player nothing", and it would also skip the repaint that draws the ring
+    /// — so a hint with a picture to show returns the empty string, which the
+    /// line already treats as "clear the line". The one thing a hint says is
+    /// `Stuck`, for the case where there is no ring to draw.
     fn hint(&mut self) -> Option<String> {
         if self.game.won() {
             return None;
         }
         let hint = self.game.hint();
         self.hint = Some(hint);
-        Some(hint.words().to_owned())
+        Some(hint.words().unwrap_or_default().to_owned())
     }
 
     fn clear_hint(&mut self) {

@@ -377,7 +377,7 @@ impl<R: Rules + 'static> Shell<R> {
                 // The dialog carries the result; the line under the board says
                 // only that the deal is over, rather than printing the same
                 // sentence twice on one screen.
-                set_text(&self.document, "status", "Deal complete.");
+                set_text(&self.document, "status", "Deal complete");
             } else {
                 set_text(&self.document, "status", &words);
             }
@@ -593,7 +593,15 @@ impl<R: Rules + 'static> Shell<R> {
         self.say(&words);
         let token = self.hint_token.get().wrapping_add(1);
         self.hint_token.set(token);
+        // A hint that has no card to ring still has a pile to point at, and the
+        // game is the one that knows which: while a hint is up, `default_focus`
+        // answers with the hint's own target. So the keyboard lands on it —
+        // which is also how Enter performs a hinted move — and a hint about an
+        // empty pile is answered by focus alone.
+        let focus = self.rules.default_focus();
+        self.board.set_focus(focus.0, focus.1);
         self.paint();
+        self.board.focus_element();
         let weak = Weak::clone(shared);
         let closure = Closure::<dyn FnMut()>::new(move || {
             let Some(shared) = weak.upgrade() else {
@@ -816,7 +824,7 @@ fn bind_menu<R: Rules + 'static>(document: &Document, shared: &Rc<RefCell<Shell<
             shell.rules.set_option(&name, &value);
             shell.save_options();
             shell.paint_menu();
-            shell.say("Next deal.");
+            shell.say("Next deal");
         });
         listen(&select, "change", closure.as_ref().unchecked_ref());
         closure.forget();

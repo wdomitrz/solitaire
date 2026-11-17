@@ -26,9 +26,12 @@ shell and `cargo build` writes the publishable site into `dist/`.
   turns the stock to something playable changes the deal; a card moved off a king
   and back onto it does not, and neither does turning the stock on a deal where
   nothing in it can be played. When nothing but that is left, the deal is stuck.
-- Both buttons answer in one word — **Stuck.** or **Not stuck.** — and Hint
-  draws the move instead of describing it, ringing the card to pick up and the
-  place it goes.
+- **Hint** draws the move instead of describing it: a ring on the card to pick
+  up and one on the place it goes, with the keyboard moved there so Enter plays
+  it. When the move is only "turn the stock" or "turn the waste back over" there
+  is nothing to ring, so the pile itself takes the focus. A hint says nothing at
+  all unless there is nothing to do, and then it says **Stuck** — the same word
+  **Stuck?** gives, which otherwise answers **Not stuck**.
 - The menu holds the two choices that define the deal, and both apply to the
   *next* one so that changing your mind never discards a game in progress:
 
